@@ -1,4 +1,6 @@
-// Tiny local web server for developing InkNotes: serves ./app on http://localhost:5173.
+// Tiny local web server for developing InkNotes and InkTasks, laid out like GitHub Pages:
+//   http://localhost:5173/inknotes/  -> ./app            (also at / for older bookmarks)
+//   http://localhost:5173/inktasks/  -> ../InkTasks/app
 // Run: node dev-server.js
 //
 // FAKE_MS=1 node dev-server.js  adds a pretend Microsoft sign-in and OneDrive app folder (kept in
@@ -11,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "app");
+const MOUNTS = [["/inknotes/", ROOT], ["/inktasks/", path.join(__dirname, "..", "InkTasks", "app")], ["/", ROOT]];
 
 const FAKE = !!process.env.FAKE_MS || process.argv.includes("--fake-ms");
 const PORT_ARG = process.argv.find(a => /^--port=\d+$/.test(a));
@@ -23,7 +26,26 @@ const TYPES = {
 
 // ---------- pretend Microsoft ----------
 const files = new Map();   // "notes/x.json" -> { bytes, etag }
-let etagN = 0, tokenN = 0, expireNext = false, silentFails = false;
+let etagN = 0, tokenN = 0, expireNext = false, silentFails = false, tasksGranted = false;
+// Pretend Microsoft To Do, for testing InkTasks' import.
+const TODO = [
+  { id: "L1=", displayName: "Tasks", wellknownListName: "defaultList", tasks: [
+    { id: "T1/a=", title: "Renew library card", status: "notStarted", importance: "high", body: { content: "Bring ID", contentType: "text" },
+      dueDateTime: { dateTime: "2026-12-01T00:00:00.0000000", timeZone: "UTC" }, createdDateTime: "2026-11-01T10:00:00Z", lastModifiedDateTime: "2026-11-02T10:00:00Z" },
+    { id: "T2/b=", title: "Water plants", status: "notStarted", importance: "normal", body: { content: "", contentType: "text" },
+      recurrence: { pattern: { type: "weekly", interval: 1, daysOfWeek: ["monday", "thursday"] } },
+      dueDateTime: { dateTime: "2026-11-24T00:00:00.0000000", timeZone: "UTC" }, isReminderOn: true,
+      reminderDateTime: { dateTime: "2026-11-24T14:00:00.0000000", timeZone: "UTC" }, createdDateTime: "2026-10-01T10:00:00Z", lastModifiedDateTime: "2026-11-20T10:00:00Z" },
+  ] },
+  { id: "L2=", displayName: "Groceries", wellknownListName: "none", tasks: [
+    { id: "T3/c=", title: "Weekly shop", status: "notStarted", importance: "normal", body: { content: "<p>Check the <b>coupons</b></p>", contentType: "html" },
+      checklistItems: [{ displayName: "Milk", isChecked: true }, { displayName: "Eggs", isChecked: false }],
+      createdDateTime: "2026-11-10T10:00:00Z", lastModifiedDateTime: "2026-11-21T10:00:00Z" },
+    { id: "T4/d=", title: "Buy coffee", status: "completed", importance: "normal", body: { content: "", contentType: "text" },
+      completedDateTime: { dateTime: "2026-11-15T00:00:00.0000000", timeZone: "UTC" }, createdDateTime: "2026-11-09T10:00:00Z", lastModifiedDateTime: "2026-11-15T10:00:00Z" },
+  ] },
+  { id: "L3=", displayName: "Flagged email", wellknownListName: "flaggedEmails", tasks: [{ id: "T5=", title: "Re: budget", status: "notStarted" }] },
+];
 const b64url = o => Buffer.from(JSON.stringify(o)).toString("base64url");
 const json = (res, code, obj, headers = {}) => { res.writeHead(code, { "Content-Type": "application/json", ...headers }); res.end(JSON.stringify(obj)); };
 const readBody = req => new Promise(r => { const c = []; req.on("data", d => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
@@ -38,7 +60,7 @@ async function fake(req, res, url) {
   }
   if (p === "/__fake/oauth/token") {
     const form = new URLSearchParams((await readBody(req)).toString());
-    if (form.get("grant_type") === "authorization_code") { expireNext = false; silentFails = false; }
+    if (form.get("grant_type") === "authorization_code") { expireNext = false; silentFails = false; tasksGranted = /Tasks\.Read/.test(form.get("scope") || ""); }
     if (form.get("grant_type") === "refresh_token" && expireNext) { return json(res, 400, { error: "invalid_grant", error_description: "AADSTS700084: refresh token expired" }), true; }
     if (!form.get("client_id")) return json(res, 400, { error: "invalid_request" }), true;
     const id = b64url({ alg: "none" }) + "." + b64url({ name: "Test User", preferred_username: "test.user@example.com" }) + ".sig";
@@ -52,6 +74,21 @@ async function fake(req, res, url) {
     const f = files.get(decodeURIComponent(p.slice("/__fake/dl/".length)));
     if (!f) { res.writeHead(404); res.end(); return true; }
     res.writeHead(200, { "Content-Type": "application/octet-stream" }); res.end(f.bytes); return true;
+  }
+  const T = "/__fake/graph/v1.0/me/todo/lists";
+  if (p.startsWith(T)) {
+    if (!/^Bearer fake-at-/.test(req.headers.authorization || "")) return json(res, 401, { error: { code: "InvalidAuthenticationToken" } }), true;
+    if (!tasksGranted) return json(res, 403, { error: { code: "Forbidden", message: "Missing Tasks.Read" } }), true;
+    const rest = decodeURIComponent(p.slice(T.length));
+    if (!rest) return json(res, 200, { value: TODO.map(({ tasks, ...l }) => l) }), true;
+    const m = /^\/([^/]+)\/tasks$/.exec(rest);
+    const list = m && TODO.find(l => l.id === m[1]);
+    if (!list) return json(res, 404, { error: { code: "itemNotFound" } }), true;
+    // two pages, to exercise paging
+    const page = Number(url.searchParams.get("page") || 0), items = list.tasks.slice(page, page + 1);
+    const out = { value: items };
+    if (page + 1 < list.tasks.length) out["@odata.nextLink"] = `${url.origin}${T}/${encodeURIComponent(list.id)}/tasks?page=${page + 1}`;
+    return json(res, 200, out), true;
   }
   const G = "/__fake/graph/v1.0/me/drive/special/approot";
   if (p.startsWith(G)) {
@@ -78,7 +115,7 @@ async function fake(req, res, url) {
     }
     return json(res, 405, {}), true;
   }
-  if (p === "/js/config.js") {
+  if (p === "/js/config.js" || p === "/inknotes/js/config.js") {
     res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" });
     res.end(`export const CLIENT_ID = "fake-client";\nexport const AUTHORITY = "${url.origin}/__fake/oauth";\nexport const GRAPH = "${url.origin}/__fake/graph/v1.0";\n`);
     return true;
@@ -89,9 +126,12 @@ async function fake(req, res, url) {
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (FAKE && await fake(req, res, url)) return;
-  const urlPath = decodeURIComponent(url.pathname);
-  let file = path.normalize(path.join(ROOT, urlPath));
-  if (!file.startsWith(ROOT)) { res.writeHead(403); res.end("Forbidden"); return; }
+  const fullPath = decodeURIComponent(url.pathname);
+  if (fullPath === "/inknotes" || fullPath === "/inktasks") { res.writeHead(301, { Location: fullPath + "/" }); res.end(); return; }
+  const [mount, base] = MOUNTS.find(([m]) => fullPath.startsWith(m));
+  const urlPath = "/" + fullPath.slice(mount.length);
+  let file = path.normalize(path.join(base, urlPath));
+  if (!file.startsWith(base)) { res.writeHead(403); res.end("Forbidden"); return; }
   if (urlPath.endsWith("/")) file = path.join(file, "index.html");
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { "Content-Type": "text/plain" }); res.end("Not found"); return; }

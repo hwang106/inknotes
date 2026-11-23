@@ -33,6 +33,7 @@ function fakeDevice() {
     putNote: async n => { notes.set(n.id, c(n)); },
     getImage: async id => images.get(id) || null,
     putImage: async (id, blob) => { images.set(id, blob); },
+    get all() { return this.allNotes; }, get get() { return this.getNote; }, get put() { return this.putNote; },
   };
 }
 const note = (id, text, t, extra = {}) => ({ id, color: "yellow", html: `<div>${text}</div>`, text, strokes: [{ c: "#000", w: 2, g: 1, pts: [[1, 2, .5, 0], [3, 4, .6, 8]] }], created: t, updated: t, deleted: false, ...extra });
@@ -132,6 +133,22 @@ await test("the drive only ever holds ciphertext", async () => {
     const s = Buffer.from(f.bytes).toString("latin1");
     assert.ok(!/Groceries|Ideas|From C|yellow|strokes/.test(s));
   }
+});
+
+await test("tasks sync in their own folder, alongside notes", async () => {
+  const T1 = fakeDevice(), T2 = fakeDevice();
+  const runT = dev => syncOnce({ drive, local: dev, key, state: dev.state, folder: "todo", images: false });
+  await T1.putNote({ id: "inbox", kind: "list", name: "Tasks", created: 0, updated: 0, welcome: true });
+  await T1.putNote({ id: "t1", kind: "task", listId: "inbox", title: "Buy milk", done: false, created: 5, updated: 5 });
+  const r = await runT(T1);
+  assert.equal(r.pushed, 1, "default list stays local");
+  assert.ok(drive.files.has("todo/t1.json"));
+  await runT(T2);
+  assert.equal(T2.notes.get("t1").title, "Buy milk");
+  await T2.putNote({ ...T2.notes.get("t1"), done: true, updated: 9 });
+  await runT(T2); await runT(T1);
+  assert.equal(T1.notes.get("t1").done, true);
+  assert.ok(![...T1.notes.keys()].some(id => id.startsWith("n")), "notes don't leak into tasks");
 });
 
 console.log(`\n${passed} tests passed`);

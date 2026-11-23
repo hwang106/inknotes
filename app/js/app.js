@@ -1,6 +1,7 @@
 import { InkSurface, INKS, W, drawStroke, IS_ANDROID, inkBottom, smoothPx } from "./ink.js";
 import { store } from "./store.js";
-import { sync } from "./sync.js";
+import { createSync } from "./sync.js";
+import { mountSyncUI } from "./sync-ui.js";
 
 // Every element with an id, captured once. (The note view can move into a floating
 // always-on-top window, where document.getElementById would no longer find it.)
@@ -206,6 +207,43 @@ el.imageFile.onchange = () => {
   const files = [...el.imageFile.files]; el.imageFile.value = "";
   if (files.length) insertImages(files);
 };
+
+// ---------- make a task in InkTasks ----------
+// Selected text becomes the task (first line the title, further lines its steps); with nothing
+// selected, the note itself does. InkTasks lives on the same website, so this writes straight
+// into its storage, works offline, and InkTasks shows it at once.
+el.makeTask.addEventListener("pointerdown", e => e.preventDefault());   // keep the text selection
+el.makeTask.onclick = async () => {
+  if (!current) return;
+  const doc = body.ownerDocument, sel = doc.getSelection();
+  const picked = sel && sel.rangeCount && !sel.isCollapsed && body.contains(sel.anchorNode) ? sel.toString() : "";
+  const lines = picked.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const noteTitle = titleOf(current);
+  const generic = ["Handwritten note", "Image note", "Empty note"].includes(noteTitle);
+  const title = (lines[0] || (generic ? "Follow up on note" : noteTitle)).slice(0, 255);
+  await flushSaves();
+  try {
+    const tasksDb = await import("/inktasks/js/db.js");
+    const t = tasksDb.newTask({
+      title, noteId: current.id, noteTitle,
+      steps: lines.slice(1).map(l => ({ id: uid(), title: l.slice(0, 255), done: false })),
+    });
+    await tasksDb.db.put(t);
+    tasksDb.announce([t.id], "inknotes");
+    syncTasksSoon(tasksDb.db);
+    toast(`Added “${title}” to InkTasks.`, "Open", () => window.open(`/inktasks/?task=${encodeURIComponent(t.id)}`, "inktasks"));
+  } catch (err) {
+    console.warn(err);
+    toast("Couldn't reach InkTasks. Open InkTasks once while online, then try again.");
+  }
+};
+let taskSync = null;
+function syncTasksSoon(tasksDb) {
+  if (!sync.configured || !sync.account()) return;
+  if (taskSync) { taskSync.soon(); return; }
+  taskSync = createSync({ folder: "todo", stateKey: "syncState:todo", local: tasksDb });
+  taskSync.start({ onStatus() {}, onPulled(ids) { import("/inktasks/js/db.js").then(m => m.announce(ids, "inknotes")); } });
+}
 
 // ---------- layout: the page grows with text, images and ink ----------
 let layoutQueued = false;
@@ -577,128 +615,20 @@ async function init() {
   else app.dataset.view = "list";
 }
 // ---------- OneDrive sync ----------
-const SYNC_COPY = {
-  signedOut: {
-    text: "Keep your notes the same on your Surface and your phone. InkNotes keeps an encrypted copy in your OneDrive, in Apps/InkNotes.",
-    hint: "Use your personal Microsoft account. InkNotes can only see its own folder, nothing else in your OneDrive.",
-    primary: "Sign in with Microsoft",
-  },
-  needsNewPassphrase: {
-    text: "Choose a sync passphrase. Notes are encrypted with it before they leave this device, so only your devices can read them. Microsoft can't.",
-    hint: "At least 8 characters. You'll type it once on each device. If you forget it, the notes on your devices are safe, but you'd need to start sync over.",
-    primary: "Turn on sync", pass: 2, alt: "Sign out",
-  },
-  needsPassphrase: {
-    text: "Type the sync passphrase you chose on your other device.",
-    hint: "", primary: "Unlock", pass: 1, alt: "Forgot it? Start over",
-  },
-  reauth: { text: "Your Microsoft sign-in has expired.", hint: "Sign in again to keep syncing.", primary: "Sign in again", alt: "Sign out" },
-};
-let syncPrompted = false;
-function syncStatusLine(st) {
-  if (st.state === "syncing") return (st.detail || "Syncing") + "…";
-  if (st.state === "offline") return "Offline. Changes will sync when you're back online.";
-  if (st.state === "error") return "Sync hit a problem: " + st.message;
-  if (!st.last) return "Not synced yet.";
-  const d = new Date(st.last), today = d.toDateString() === new Date().toDateString();
-  return "Last synced " + fmtTime(st.last) + (today ? "" : " at " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + ".";
-}
-function renderSync(st = sync.status) {
-  el.syncBtn.hidden = st.state === "unconfigured";
-  el.syncBtn.dataset.state = st.state;
-  const line = st.state === "signedOut" ? "off" : syncStatusLine(st);
-  el.syncBtn.title = "OneDrive sync: " + line;
-  el.syncBtn.setAttribute("aria-label", el.syncBtn.title);
-  if ((st.state === "needsPassphrase" || st.state === "needsNewPassphrase") && !syncPrompted && app.dataset.mode === "main" && !el.syncDialog.open) {
-    syncPrompted = true; openSyncDialog();
-  }
-  if (el.syncDialog.open) fillSyncDialog(st);
-}
-function fillSyncDialog(st) {
-  const c = SYNC_COPY[st.state];
-  const acct = sync.account();
-  const who = acct ? (acct.name && acct.user ? `${acct.name} (${acct.user})` : acct.name || acct.user) : "";
-  el.syncText.textContent = c ? c.text : `Syncing with ${who ? "the OneDrive of " + who : "your OneDrive"}.`;
-  el.syncHint.textContent = c ? c.hint : syncStatusLine(st);
-  el.syncHint.hidden = !el.syncHint.textContent;
-  if (!el.syncPrimary.dataset.busy) el.syncPrimary.textContent = c ? c.primary : "Sync now";
-  el.syncPrimary.disabled = st.state === "syncing" || !!el.syncPrimary.dataset.busy;
-  const alt = c ? c.alt : "Sign out";
-  el.syncAlt.hidden = !alt;
-  if (!altArmed) el.syncAlt.textContent = alt || "";
-  el.passFields.hidden = !(c && c.pass);
-  el.pass2Wrap.hidden = !(c && c.pass === 2);
-  if (c && c.pass && el.passFields.dataset.for !== st.state) {   // fresh fields whenever the question changes
-    el.passFields.dataset.for = st.state;
-    el.pass1.value = el.pass2.value = "";
-    el.pass1.autocomplete = c.pass === 2 ? "new-password" : "current-password";
-    setTimeout(() => el.pass1.focus(), 0);
-  }
-  if (!(c && c.pass)) delete el.passFields.dataset.for;
-}
-function openSyncDialog() {
-  syncError(""); resetAlt();
-  delete el.passFields.dataset.for;
-  fillSyncDialog(sync.status);
-  if (!el.syncDialog.open) el.syncDialog.showModal();
-}
-function syncError(msg) { el.syncError.textContent = msg; el.syncError.hidden = !msg; }
-let altArmed = 0;
-function resetAlt() { clearTimeout(altArmed); altArmed = 0; el.syncAlt.classList.remove("armed"); }
-el.syncBtn.onclick = openSyncDialog;
-el.syncClose.onclick = () => el.syncDialog.close();
-el.syncForm.addEventListener("submit", async e => {
-  e.preventDefault();
-  syncError("");
-  const st = sync.status.state;
-  if (st === "signedOut" || st === "reauth") { await flushSaves(); sync.signIn(); return; }
-  if (st === "needsPassphrase" || st === "needsNewPassphrase") {
-    const p = el.pass1.value;
-    if (st === "needsNewPassphrase") {
-      if (p.length < 8) return syncError("Use at least 8 characters.");
-      if (p !== el.pass2.value) return syncError("The two passphrases don't match.");
-    }
-    el.syncPrimary.dataset.busy = "1"; el.syncPrimary.disabled = true; el.syncPrimary.textContent = "Working…";
-    try {
-      const err = await sync.usePassphrase(p);
-      if (err) { syncError(err); return; }
-      el.pass1.value = el.pass2.value = "";
-      el.syncDialog.close();
-      toast(st === "needsNewPassphrase" ? "Sync is on. Your notes are uploading, encrypted." : "Unlocked. Your notes are syncing.");
-    } catch (err) {
-      syncError(navigator.onLine ? "Couldn't reach OneDrive: " + err.message : "You're offline. Try again when you're connected.");
-    } finally {
-      delete el.syncPrimary.dataset.busy;
-      if (el.syncDialog.open) fillSyncDialog(sync.status);
-    }
-    return;
-  }
-  sync.now();
+const sync = createSync({
+  folder: "notes", stateKey: "syncState", images: true,
+  local: { all: store.allNotes, get: store.getNote, put: store.putNote, getImage: store.getImage, putImage: store.putImage },
 });
-el.syncAlt.onclick = async () => {
-  if (sync.status.state === "needsPassphrase") {
-    if (!altArmed) {
-      el.syncAlt.classList.add("armed");
-      el.syncAlt.textContent = "Select again to remove the encrypted copies in OneDrive (notes on this device stay)";
-      altArmed = setTimeout(() => { resetAlt(); fillSyncDialog(sync.status); }, 5000);
-      return;
-    }
-    resetAlt();
-    try { await sync.startOver(); } catch (err) { syncError("Couldn't reach OneDrive: " + err.message); }
-    return;
-  }
-  await sync.signOut();
-  el.syncDialog.close();
-  toast("Signed out of OneDrive. Your notes stay on this device.");
-};
-el.syncDialog.addEventListener("close", resetAlt);
-
+const syncUI = mountSyncUI({
+  sync, button: el.syncBtn, appName: "your notes", toast,
+  isMain: () => app.dataset.mode === "main", beforeSignIn: flushSaves,
+});
 function startSync() {
-  renderSync();
   if (!sync.configured) return;
   sync.start({
     allowRedirect: app.dataset.mode === "main",
-    onStatus: renderSync,
+    onStatus: syncUI.render,
+    onRedirect: flushSaves,
     onPulled: ids => ids.forEach(id => {
       applyExternal(id);
       if (channel) channel.postMessage({ type: "changed", id, from: windowId });

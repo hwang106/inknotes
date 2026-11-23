@@ -1,6 +1,8 @@
 // Sign-in with a personal Microsoft account (OAuth 2.0 authorization code + PKCE, no server).
-// Asks only for Files.ReadWrite.AppFolder: InkNotes can see its own folder in OneDrive
-// (Apps/InkNotes) and nothing else.
+// Asks for Files.ReadWrite.AppFolder: the apps can see their own folder in OneDrive
+// (Apps/InkNotes) and nothing else. InkTasks' one-time import adds Tasks.Read just for that run.
+//
+// Shared by InkNotes and InkTasks (same website, so one sign-in serves both).
 //
 // Microsoft limits single-page apps to sign-ins that last 24 hours. When that runs out, the app
 // does a quick silent round-trip to Microsoft on start-up (no password needed while you're still
@@ -9,7 +11,7 @@
 import { CLIENT_ID, AUTHORITY } from "./config.js";
 
 const AUTH = AUTHORITY;
-const SCOPES = "openid profile offline_access Files.ReadWrite.AppFolder";
+export const BASE_SCOPES = "openid profile offline_access Files.ReadWrite.AppFolder";
 const TOKENS = "inknotes-auth";
 const PKCE = "inknotes-pkce";
 
@@ -19,23 +21,26 @@ export const redirectUri = () => location.origin + location.pathname.replace(/in
 
 function load() { try { return JSON.parse(localStorage.getItem(TOKENS)) || null; } catch (_) { return null; } }
 function save(v) { try { v ? localStorage.setItem(TOKENS, JSON.stringify(v)) : localStorage.removeItem(TOKENS); } catch (_) {} }
+const withLock = (name, fn) => (navigator.locks ? navigator.locks.request(name, fn) : fn());
 
 export function account() {
   const a = load();
   return a && a.rt ? { name: a.name || "", user: a.user || "" } : null;
 }
 
-export async function signIn({ silent = false } = {}) {
+// purpose: a short tag handed back by handleRedirect (e.g. "import"); extraScopes: added for this sign-in only.
+export async function signIn({ silent = false, extraScopes = "", purpose = "" } = {}) {
   const verifier = randomText(48);
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const state = randomText(16);
-  localStorage.setItem(PKCE, JSON.stringify({ verifier, state, silent, back: location.search, at: Date.now() }));
+  const scope = (BASE_SCOPES + " " + extraScopes).trim();
+  localStorage.setItem(PKCE, JSON.stringify({ verifier, state, silent, purpose, scope, back: location.search, at: Date.now() }));
   const p = new URLSearchParams({
     client_id: CLIENT_ID, response_type: "code", response_mode: "query", redirect_uri: redirectUri(),
-    scope: SCOPES, state, code_challenge: challenge, code_challenge_method: "S256",
+    scope, state, code_challenge: challenge, code_challenge_method: "S256",
   });
   const a = load();
-  if (silent) p.set("prompt", "none"); else p.set("prompt", "select_account");
+  p.set("prompt", silent ? "none" : "select_account");
   if (a && a.user) p.set("login_hint", a.user);
   location.assign(`${AUTH}/authorize?${p}`);
 }
@@ -48,20 +53,24 @@ export async function handleRedirect() {
   try { saved = JSON.parse(localStorage.getItem(PKCE)); } catch (_) {}
   localStorage.removeItem(PKCE);
   history.replaceState(null, "", redirectUri() + ((saved && saved.back) || ""));   // drop the code from the address bar
-  if (!saved || saved.state !== q.get("state") || Date.now() - saved.at > 15 * 60e3) return { error: "stale", silent: !!(saved && saved.silent) };
-  if (q.has("error")) return { error: q.get("error"), description: q.get("error_description") || "", silent: saved.silent };
+  const info = { silent: !!(saved && saved.silent), purpose: (saved && saved.purpose) || "" };
+  if (!saved || saved.state !== q.get("state") || Date.now() - saved.at > 15 * 60e3) return { ...info, error: "stale" };
+  if (q.has("error")) return { ...info, error: q.get("error"), description: q.get("error_description") || "" };
   try {
-    await token({ grant_type: "authorization_code", code: q.get("code"), redirect_uri: redirectUri(), code_verifier: saved.verifier });
-    return { ok: true, silent: saved.silent };
+    await withLock("inknotes-token", () => token({
+      grant_type: "authorization_code", code: q.get("code"), redirect_uri: redirectUri(),
+      code_verifier: saved.verifier, scope: saved.scope || BASE_SCOPES,
+    }));
+    return { ...info, ok: true };
   } catch (err) {
-    return { error: err.code || "token", description: err.message, silent: saved.silent };
+    return { ...info, error: err.code || "token", description: err.message };
   }
 }
 
 async function token(params) {
   const res = await fetch(`${AUTH}/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: CLIENT_ID, scope: SCOPES, ...params }),
+    body: new URLSearchParams({ client_id: CLIENT_ID, scope: BASE_SCOPES, ...params }),
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(j.error_description || j.error || `Sign-in failed (${res.status})`); e.code = j.error; throw e; }
@@ -79,15 +88,23 @@ async function token(params) {
 }
 
 export async function accessToken({ fresh = false } = {}) {
-  const a = load();
+  let a = load();
   if (!a || !a.rt) { const e = new Error("Not signed in"); e.signedOut = true; throw e; }
   if (!fresh && a.at && Date.now() < a.exp) return a.at;
-  try {
-    return await token({ grant_type: "refresh_token", refresh_token: a.rt });
-  } catch (err) {
-    if (err.code) { const e = new Error("Microsoft sign-in has expired"); e.reauth = true; throw e; }
-    throw err;   // offline or similar: try again later
-  }
+  // One refresh at a time across every InkNotes / InkTasks window; a window that waited
+  // picks up the token the other one just got.
+  return withLock("inknotes-token", async () => {
+    const seen = a.at;
+    a = load();
+    if (!a || !a.rt) { const e = new Error("Not signed in"); e.signedOut = true; throw e; }
+    if (a.at && Date.now() < a.exp && (!fresh || a.at !== seen)) return a.at;
+    try {
+      return await token({ grant_type: "refresh_token", refresh_token: a.rt });
+    } catch (err) {
+      if (err.code) { const e = new Error("Microsoft sign-in has expired"); e.reauth = true; throw e; }
+      throw err;   // offline or similar: try again later
+    }
+  });
 }
 
 export function signOut() { save(null); }
