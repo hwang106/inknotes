@@ -22,6 +22,14 @@ import { seal, unseal, sealJSON, unsealJSON } from "./crypt.js";
 export const imagesOf = n => [...(n.html || "").matchAll(/data-img="([^"]+)"/g)].map(m => m[1]);
 // Starter records each device makes (welcome note, default task list) stay local until edited.
 const localOnly = n => n.welcome && n.updated === n.created;
+// Files move a few at a time: much faster than one by one (a first sync can be hundreds of files),
+// and gentle enough on OneDrive's rate limits.
+const AT_ONCE = 6;
+async function eachAtOnce(items, fn) {
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(AT_ONCE, items.length) }, worker));
+}
 
 export async function syncOnce({ drive, local, key, state, folder = "notes", images = true, onProgress = () => {} }) {
   state.notes = state.notes || {}; state.images = state.images || {};
@@ -34,21 +42,22 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
   }
 
   // Pull: records that changed in OneDrive since this device last looked.
-  for (const [id, e] of remote) {
-    const known = state.notes[id];
-    if (known && known.etag === e.etag) continue;
-    onProgress("Downloading");
+  const toPull = [...remote].filter(([id, e]) => !(state.notes[id] && state.notes[id].etag === e.etag));
+  let pulled = 0;
+  await eachAtOnce(toPull, async ([id, e]) => {
     const bytes = await drive.read(folder, e.name, e);
-    if (!bytes) continue;
+    onProgress(toPull.length > 1 ? `Downloading ${++pulled} of ${toPull.length}` : "Downloading");
+    if (!bytes) return;
     const r = await unsealJSON(key, bytes, folder + "/" + e.name);
-    if (!r || r.id !== id) continue;
-    state.notes[id] = { etag: e.etag, updated: r.updated };
+    if (!r || r.id !== id) return;
     const l = await local.get(id);   // read fresh: it may have been edited while this runs
-    if (l && l.updated >= r.updated) continue;   // this device's copy is newer: it uploads below
-    if (images) await pullImages(r);
-    await local.put(r);
-    result.pulled.push(id);
-  }
+    if (!(l && l.updated >= r.updated)) {   // otherwise this device's copy is newer: it uploads below
+      if (images) await pullImages(r);
+      await local.put(r);
+      result.pulled.push(id);
+    }
+    state.notes[id] = { etag: e.etag, updated: r.updated };
+  });
 
   async function pullImages(n) {
     for (const imgId of imagesOf(n)) {
@@ -62,10 +71,11 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
   }
 
   // Push: records edited here since they were last uploaded or downloaded.
-  for (const l of await local.all()) {
+  const toPush = (await local.all()).filter(l => !localOnly(l) && !(state.notes[l.id] && state.notes[l.id].updated >= l.updated));
+  let pushed = 0;
+  await eachAtOnce(toPush, async l => {
     const known = state.notes[l.id];
-    if (localOnly(l) || (known && known.updated >= l.updated)) continue;
-    onProgress("Uploading");
+    onProgress(toPush.length > 1 ? `Uploading ${++pushed} of ${toPush.length}` : "Uploading");
     if (images) for (const imgId of imagesOf(l)) {
       if (state.images[imgId]) continue;
       const blob = await local.getImage(imgId);
@@ -85,6 +95,6 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
       if (err.status !== 412) throw err;
       result.conflicts++;   // another device saved it a moment ago; the next pass sorts it out
     }
-  }
+  });
   return result;
 }
