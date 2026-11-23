@@ -93,6 +93,7 @@ async function fake(req, res, url) {
   const G = "/__fake/graph/v1.0/me/drive/special/approot";
   if (p.startsWith(G)) {
     if (!/^Bearer fake-at-/.test(req.headers.authorization || "")) return json(res, 401, { error: { code: "InvalidAuthenticationToken" } }), true;
+    if (p === G && req.method === "GET") return json(res, 200, { id: "fake-approot", name: "InkNotes", parentReference: { driveId: "fake-drive", driveType: "personal" } }), true;
     const m = /^:\/(.+?)(:\/(children|content))?$/.exec(decodeURIComponent(p.slice(G.length)));
     if (!m) return json(res, 400, { error: { code: "invalidRequest" } }), true;
     const item = m[1], action = m[3];
@@ -114,6 +115,16 @@ async function fake(req, res, url) {
       res.writeHead(204); res.end(); return true;
     }
     return json(res, 405, {}), true;
+  }
+  if (p === "/inktasks/js/config.js") {
+    // Point InkTasks at the reminder service from InkTasks/worker/dev.mjs, if it has been run.
+    let vapid = "";
+    try { vapid = JSON.parse(fs.readFileSync(path.join(__dirname, "../InkTasks/worker/.dev/vapid.json"), "utf8")).publicKey; } catch (_) { /* not run yet */ }
+    res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" });
+    res.end(`export const REMINDER_SERVICE = "${vapid ? "http://localhost:8787" : ""}";
+export const VAPID_PUBLIC = "${vapid}";
+`);
+    return true;
   }
   if (p === "/js/config.js" || p === "/inknotes/js/config.js") {
     res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" });
