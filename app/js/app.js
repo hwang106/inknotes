@@ -498,6 +498,20 @@ const WELCOME_HTML =
 const WELCOME_TEXT = "Welcome to InkNotes\nWrite on this note with your pen, or tap here and type.\nPaste or drop an image to add it.\n" +
   "On Windows, the buttons at the top right open a note in its own window or keep it on top of other apps.\nNotes save on this device as you go.";
 
+const BLOCKED_MSG = "InkNotes was updated. Close or reload any other InkNotes windows to finish.";
+store.hooks.onBlocked = () => {
+  el.storageNote.hidden = false; el.storageNote.textContent = BLOCKED_MSG;
+  toast(BLOCKED_MSG); clearTimeout(toastTimer);
+};
+store.hooks.onUnblocked = () => {
+  if (el.storageNote.textContent === BLOCKED_MSG) el.storageNote.hidden = true;
+  if (el.toastText.textContent === BLOCKED_MSG) el.toast.hidden = true;
+};
+store.hooks.onVersionChange = () => {
+  toast("InkNotes was updated in another window. Reload this one to keep saving.", "Reload", () => location.reload());
+  clearTimeout(toastTimer);   // keep this message up
+};
+
 async function init() {
   syncTools();
   let all = [];

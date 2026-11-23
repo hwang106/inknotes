@@ -10,7 +10,8 @@
 
 const DB_NAME = "inknotes", DB_VERSION = 3;
 let dbPromise = null;
-let memory = null;   // { notes: Map, images: Map, meta: Map } when IndexedDB is unavailable
+let memory = null;
+const hooks = { onBlocked() {}, onUnblocked() {}, onVersionChange() {} };   // { notes: Map, images: Map, meta: Map } when IndexedDB is unavailable
 
 function open() {
   if (dbPromise) return dbPromise;
@@ -25,10 +26,13 @@ function open() {
     };
     req.onsuccess = () => {
       const db = req.result;
-      db.onversionchange = () => { db.close(); dbPromise = null; };   // let a newer version upgrade storage
+      // A newer version of the app (in another window) needs to upgrade storage: step aside.
+      db.onversionchange = () => { db.close(); dbPromise = null; hooks.onVersionChange(); };
+      hooks.onUnblocked();
       resolve(db);
     };
     req.onerror = () => reject(req.error);
+    req.onblocked = () => hooks.onBlocked();   // an older window still has storage open; waits for it
   }).catch(err => {
     console.warn("InkNotes: on-device storage unavailable; notes last only this session.", err);
     memory = { notes: new Map(), images: new Map(), meta: new Map() };
@@ -64,5 +68,6 @@ export const store = {
   getMeta: k => run("meta", "readonly", s => s.get(k), m => m.get(k)),
   setMeta: (k, v) => run("meta", "readwrite", s => s.put(v, k), m => { m.set(k, v); }),
   deleteMeta: k => run("meta", "readwrite", s => s.delete(k), m => { m.delete(k); }),
+  hooks,
   get persistent() { return !memory; },
 };
