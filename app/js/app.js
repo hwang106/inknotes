@@ -1,5 +1,6 @@
 import { InkSurface, INKS, W, drawStroke, IS_ANDROID, inkBottom, smoothPx } from "./ink.js";
 import { store } from "./store.js";
+import { sync } from "./sync.js";
 
 // Every element with an id, captured once. (The note view can move into a floating
 // always-on-top window, where document.getElementById would no longer find it.)
@@ -75,6 +76,7 @@ async function persist(n) {
   try {
     await store.putNote(n);
     if (channel) channel.postMessage({ type: "changed", id: n.id, from: windowId });
+    sync.soon();
   } catch (err) {
     toast("Couldn't save this note on the device. Check that the browser allows site storage.");
   }
@@ -357,9 +359,12 @@ async function deleteCurrent() {
 
 // ---------- other windows ----------
 const editingHere = () => surface.busy || (body.ownerDocument.activeElement === body && body.ownerDocument.hasFocus());
-if (channel) channel.onmessage = async ({ data }) => {
-  if (!data || data.from === windowId || data.type !== "changed") return;
-  const n = await store.getNote(data.id);
+if (channel) channel.onmessage = ({ data }) => {
+  if (data && data.from !== windowId && data.type === "changed") applyExternal(data.id);
+};
+// A note changed outside this window: in another window, or downloaded by OneDrive sync.
+async function applyExternal(id) {
+  const n = await store.getNote(id);
   if (!n) return;
   n.strokes = n.strokes || [];
   const mine = notes.get(n.id);
@@ -380,7 +385,7 @@ if (channel) channel.onmessage = async ({ data }) => {
     notes.set(n.id, n);
   }
   listSoon();
-};
+}
 
 let sizeTimer = 0;
 if (windowNoteId) addEventListener("resize", () => {
@@ -504,6 +509,7 @@ async function init() {
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
+  startSync();
   if (windowNoteId) {
     const n = notes.get(windowNoteId);
     if (n && !n.deleted) openNote(n.id, { focus: !n.text && !n.strokes.length });
@@ -512,7 +518,7 @@ async function init() {
   }
   if (!all.length) {
     const n = createNote();
-    n.html = WELCOME_HTML; n.text = WELCOME_TEXT;
+    n.html = WELCOME_HTML; n.text = WELCOME_TEXT; n.welcome = true;   // not synced unless edited
     await persist(n);
   }
   renderList();
@@ -521,6 +527,136 @@ async function init() {
   else if (matchMedia("(min-width: 761px)").matches) openNote(first.id);
   else app.dataset.view = "list";
 }
+// ---------- OneDrive sync ----------
+const SYNC_COPY = {
+  signedOut: {
+    text: "Keep your notes the same on your Surface and your phone. InkNotes keeps an encrypted copy in your OneDrive, in Apps/InkNotes.",
+    hint: "Use your personal Microsoft account. InkNotes can only see its own folder, nothing else in your OneDrive.",
+    primary: "Sign in with Microsoft",
+  },
+  needsNewPassphrase: {
+    text: "Choose a sync passphrase. Notes are encrypted with it before they leave this device, so only your devices can read them. Microsoft can't.",
+    hint: "At least 8 characters. You'll type it once on each device. If you forget it, the notes on your devices are safe, but you'd need to start sync over.",
+    primary: "Turn on sync", pass: 2, alt: "Sign out",
+  },
+  needsPassphrase: {
+    text: "Type the sync passphrase you chose on your other device.",
+    hint: "", primary: "Unlock", pass: 1, alt: "Forgot it? Start over",
+  },
+  reauth: { text: "Your Microsoft sign-in has expired.", hint: "Sign in again to keep syncing.", primary: "Sign in again", alt: "Sign out" },
+};
+let syncPrompted = false;
+function syncStatusLine(st) {
+  if (st.state === "syncing") return (st.detail || "Syncing") + "…";
+  if (st.state === "offline") return "Offline. Changes will sync when you're back online.";
+  if (st.state === "error") return "Sync hit a problem: " + st.message;
+  if (!st.last) return "Not synced yet.";
+  const d = new Date(st.last), today = d.toDateString() === new Date().toDateString();
+  return "Last synced " + fmtTime(st.last) + (today ? "" : " at " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + ".";
+}
+function renderSync(st = sync.status) {
+  el.syncBtn.hidden = st.state === "unconfigured";
+  el.syncBtn.dataset.state = st.state;
+  const line = st.state === "signedOut" ? "off" : syncStatusLine(st);
+  el.syncBtn.title = "OneDrive sync: " + line;
+  el.syncBtn.setAttribute("aria-label", el.syncBtn.title);
+  if ((st.state === "needsPassphrase" || st.state === "needsNewPassphrase") && !syncPrompted && app.dataset.mode === "main" && !el.syncDialog.open) {
+    syncPrompted = true; openSyncDialog();
+  }
+  if (el.syncDialog.open) fillSyncDialog(st);
+}
+function fillSyncDialog(st) {
+  const c = SYNC_COPY[st.state];
+  const acct = sync.account();
+  const who = acct ? (acct.name && acct.user ? `${acct.name} (${acct.user})` : acct.name || acct.user) : "";
+  el.syncText.textContent = c ? c.text : `Syncing with ${who ? "the OneDrive of " + who : "your OneDrive"}.`;
+  el.syncHint.textContent = c ? c.hint : syncStatusLine(st);
+  el.syncHint.hidden = !el.syncHint.textContent;
+  if (!el.syncPrimary.dataset.busy) el.syncPrimary.textContent = c ? c.primary : "Sync now";
+  el.syncPrimary.disabled = st.state === "syncing" || !!el.syncPrimary.dataset.busy;
+  const alt = c ? c.alt : "Sign out";
+  el.syncAlt.hidden = !alt;
+  if (!altArmed) el.syncAlt.textContent = alt || "";
+  el.passFields.hidden = !(c && c.pass);
+  el.pass2Wrap.hidden = !(c && c.pass === 2);
+  if (c && c.pass && el.passFields.dataset.for !== st.state) {   // fresh fields whenever the question changes
+    el.passFields.dataset.for = st.state;
+    el.pass1.value = el.pass2.value = "";
+    el.pass1.autocomplete = c.pass === 2 ? "new-password" : "current-password";
+    setTimeout(() => el.pass1.focus(), 0);
+  }
+  if (!(c && c.pass)) delete el.passFields.dataset.for;
+}
+function openSyncDialog() {
+  syncError(""); resetAlt();
+  delete el.passFields.dataset.for;
+  fillSyncDialog(sync.status);
+  if (!el.syncDialog.open) el.syncDialog.showModal();
+}
+function syncError(msg) { el.syncError.textContent = msg; el.syncError.hidden = !msg; }
+let altArmed = 0;
+function resetAlt() { clearTimeout(altArmed); altArmed = 0; el.syncAlt.classList.remove("armed"); }
+el.syncBtn.onclick = openSyncDialog;
+el.syncClose.onclick = () => el.syncDialog.close();
+el.syncForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  syncError("");
+  const st = sync.status.state;
+  if (st === "signedOut" || st === "reauth") { await flushSaves(); sync.signIn(); return; }
+  if (st === "needsPassphrase" || st === "needsNewPassphrase") {
+    const p = el.pass1.value;
+    if (st === "needsNewPassphrase") {
+      if (p.length < 8) return syncError("Use at least 8 characters.");
+      if (p !== el.pass2.value) return syncError("The two passphrases don't match.");
+    }
+    el.syncPrimary.dataset.busy = "1"; el.syncPrimary.disabled = true; el.syncPrimary.textContent = "Working…";
+    try {
+      const err = await sync.usePassphrase(p);
+      if (err) { syncError(err); return; }
+      el.pass1.value = el.pass2.value = "";
+      el.syncDialog.close();
+      toast(st === "needsNewPassphrase" ? "Sync is on. Your notes are uploading, encrypted." : "Unlocked. Your notes are syncing.");
+    } catch (err) {
+      syncError(navigator.onLine ? "Couldn't reach OneDrive: " + err.message : "You're offline. Try again when you're connected.");
+    } finally {
+      delete el.syncPrimary.dataset.busy;
+      if (el.syncDialog.open) fillSyncDialog(sync.status);
+    }
+    return;
+  }
+  sync.now();
+});
+el.syncAlt.onclick = async () => {
+  if (sync.status.state === "needsPassphrase") {
+    if (!altArmed) {
+      el.syncAlt.classList.add("armed");
+      el.syncAlt.textContent = "Select again to remove the encrypted copies in OneDrive (notes on this device stay)";
+      altArmed = setTimeout(() => { resetAlt(); fillSyncDialog(sync.status); }, 5000);
+      return;
+    }
+    resetAlt();
+    try { await sync.startOver(); } catch (err) { syncError("Couldn't reach OneDrive: " + err.message); }
+    return;
+  }
+  await sync.signOut();
+  el.syncDialog.close();
+  toast("Signed out of OneDrive. Your notes stay on this device.");
+};
+el.syncDialog.addEventListener("close", resetAlt);
+
+function startSync() {
+  renderSync();
+  if (!sync.configured) return;
+  sync.start({
+    allowRedirect: app.dataset.mode === "main",
+    onStatus: renderSync,
+    onPulled: ids => ids.forEach(id => {
+      applyExternal(id);
+      if (channel) channel.postMessage({ type: "changed", id, from: windowId });
+    }),
+  });
+}
+
 init();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

@@ -1,9 +1,10 @@
 // Offline support. Network first, so a new version shows up as soon as it's online;
 // the cached copy is used when there's no connection.
-const CACHE = "inknotes-v1";
+const CACHE = "inknotes-v2";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/app.js", "js/ink.js", "js/store.js",
+  "js/sync.js", "js/sync-engine.js", "js/crypt.js", "js/auth.js", "js/graph.js", "js/config.js",
   "icons/icon.svg", "icons/icon-192.png",
 ];
 

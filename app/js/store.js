@@ -6,10 +6,11 @@
 //         for search and previews. Deleted notes stay as tombstones (deleted: true) so a later
 //         OneDrive sync can pass deletions to other devices.
 // images: { id, blob } — pasted images, stored apart from the note so notes stay small.
+// meta:   small values for OneDrive sync (the encryption key, what was last synced).
 
-const DB_NAME = "inknotes", DB_VERSION = 2;
+const DB_NAME = "inknotes", DB_VERSION = 3;
 let dbPromise = null;
-let memory = null;   // { notes: Map, images: Map } when IndexedDB is unavailable
+let memory = null;   // { notes: Map, images: Map, meta: Map } when IndexedDB is unavailable
 
 function open() {
   if (dbPromise) return dbPromise;
@@ -20,13 +21,17 @@ function open() {
       const db = req.result;
       if (!db.objectStoreNames.contains("notes")) db.createObjectStore("notes", { keyPath: "id" });
       if (!db.objectStoreNames.contains("images")) db.createObjectStore("images", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); dbPromise = null; };   // let a newer version upgrade storage
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error("Storage is blocked"));
   }).catch(err => {
     console.warn("InkNotes: on-device storage unavailable; notes last only this session.", err);
-    memory = { notes: new Map(), images: new Map() };
+    memory = { notes: new Map(), images: new Map(), meta: new Map() };
     return null;
   });
   return dbPromise;
@@ -56,5 +61,8 @@ export const store = {
   },
   putImage: (id, blob) => run("images", "readwrite", s => s.put({ id, blob }), m => { m.set(id, { id, blob }); }),
   getImage: id => run("images", "readonly", s => s.get(id), m => m.get(id)).then(r => (r ? r.blob : null)),
+  getMeta: k => run("meta", "readonly", s => s.get(k), m => m.get(k)),
+  setMeta: (k, v) => run("meta", "readwrite", s => s.put(v, k), m => { m.set(k, v); }),
+  deleteMeta: k => run("meta", "readwrite", s => s.delete(k), m => { m.delete(k); }),
   get persistent() { return !memory; },
 };

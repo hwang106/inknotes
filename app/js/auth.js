@@ -1,0 +1,93 @@
+// Sign-in with a personal Microsoft account (OAuth 2.0 authorization code + PKCE, no server).
+// Asks only for Files.ReadWrite.AppFolder: InkNotes can see its own folder in OneDrive
+// (Apps/InkNotes) and nothing else.
+//
+// Microsoft limits single-page apps to sign-ins that last 24 hours. When that runs out, the app
+// does a quick silent round-trip to Microsoft on start-up (no password needed while you're still
+// signed in to Microsoft in this browser); only if that fails does it ask you to sign in again.
+
+import { CLIENT_ID, AUTHORITY } from "./config.js";
+
+const AUTH = AUTHORITY;
+const SCOPES = "openid profile offline_access Files.ReadWrite.AppFolder";
+const TOKENS = "inknotes-auth";
+const PKCE = "inknotes-pkce";
+
+const b64url = u8 => btoa(String.fromCharCode(...u8)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const randomText = n => b64url(crypto.getRandomValues(new Uint8Array(n)));
+export const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, "");
+
+function load() { try { return JSON.parse(localStorage.getItem(TOKENS)) || null; } catch (_) { return null; } }
+function save(v) { try { v ? localStorage.setItem(TOKENS, JSON.stringify(v)) : localStorage.removeItem(TOKENS); } catch (_) {} }
+
+export function account() {
+  const a = load();
+  return a && a.rt ? { name: a.name || "", user: a.user || "" } : null;
+}
+
+export async function signIn({ silent = false } = {}) {
+  const verifier = randomText(48);
+  const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const state = randomText(16);
+  localStorage.setItem(PKCE, JSON.stringify({ verifier, state, silent, back: location.search, at: Date.now() }));
+  const p = new URLSearchParams({
+    client_id: CLIENT_ID, response_type: "code", response_mode: "query", redirect_uri: redirectUri(),
+    scope: SCOPES, state, code_challenge: challenge, code_challenge_method: "S256",
+  });
+  const a = load();
+  if (silent) p.set("prompt", "none"); else p.set("prompt", "select_account");
+  if (a && a.user) p.set("login_hint", a.user);
+  location.assign(`${AUTH}/authorize?${p}`);
+}
+
+// Call once at start-up. Returns null when this page load isn't a return from Microsoft's sign-in.
+export async function handleRedirect() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("state") || !(q.has("code") || q.has("error"))) return null;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PKCE)); } catch (_) {}
+  localStorage.removeItem(PKCE);
+  history.replaceState(null, "", redirectUri() + ((saved && saved.back) || ""));   // drop the code from the address bar
+  if (!saved || saved.state !== q.get("state") || Date.now() - saved.at > 15 * 60e3) return { error: "stale", silent: !!(saved && saved.silent) };
+  if (q.has("error")) return { error: q.get("error"), description: q.get("error_description") || "", silent: saved.silent };
+  try {
+    await token({ grant_type: "authorization_code", code: q.get("code"), redirect_uri: redirectUri(), code_verifier: saved.verifier });
+    return { ok: true, silent: saved.silent };
+  } catch (err) {
+    return { error: err.code || "token", description: err.message, silent: saved.silent };
+  }
+}
+
+async function token(params) {
+  const res = await fetch(`${AUTH}/token`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: CLIENT_ID, scope: SCOPES, ...params }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(j.error_description || j.error || `Sign-in failed (${res.status})`); e.code = j.error; throw e; }
+  const prev = load() || {};
+  let { name, user } = prev;
+  if (j.id_token) {
+    try {
+      const part = j.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(part), c => c.charCodeAt(0))));
+      name = claims.name || name; user = claims.preferred_username || claims.email || user;
+    } catch (_) {}
+  }
+  save({ rt: j.refresh_token || prev.rt, at: j.access_token, exp: Date.now() + (j.expires_in - 120) * 1000, name, user });
+  return j.access_token;
+}
+
+export async function accessToken({ fresh = false } = {}) {
+  const a = load();
+  if (!a || !a.rt) { const e = new Error("Not signed in"); e.signedOut = true; throw e; }
+  if (!fresh && a.at && Date.now() < a.exp) return a.at;
+  try {
+    return await token({ grant_type: "refresh_token", refresh_token: a.rt });
+  } catch (err) {
+    if (err.code) { const e = new Error("Microsoft sign-in has expired"); e.reauth = true; throw e; }
+    throw err;   // offline or similar: try again later
+  }
+}
+
+export function signOut() { save(null); }

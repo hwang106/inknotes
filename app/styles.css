@@ -179,3 +179,39 @@ body.pip .back-btn, body.pip .popout-btn { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   .card { transition: box-shadow .15s ease; }
 }
+
+/* ---------- OneDrive sync ---------- */
+.list-head h1 { margin-right: auto; }
+.sync-btn { position: relative; color: var(--muted); }
+.sync-btn::after {
+  content: ""; position: absolute; right: 5px; bottom: 6px; width: 8px; height: 8px; border-radius: 50%;
+  border: 2px solid var(--panel); background: transparent;
+}
+.sync-btn[data-state="ok"] { color: var(--fg); }
+.sync-btn[data-state="ok"]::after { background: #2e9d5b; }
+.sync-btn[data-state="syncing"] { color: var(--accent); }
+.sync-btn[data-state="syncing"]::after { background: var(--accent); animation: sync-pulse 1s ease-in-out infinite alternate; }
+.sync-btn[data-state="error"]::after, .sync-btn[data-state="reauth"]::after,
+.sync-btn[data-state="needsPassphrase"]::after, .sync-btn[data-state="needsNewPassphrase"]::after { background: var(--danger); }
+.sync-btn[data-state="offline"]::after { background: var(--muted); }
+@keyframes sync-pulse { to { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .sync-btn[data-state="syncing"]::after { animation: none; } }
+
+.sheet {
+  width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); color: var(--fg); box-shadow: var(--shadow);
+}
+.sheet::backdrop { background: rgba(10, 14, 22, .45); }
+.sheet-body { display: grid; gap: 12px; padding: 20px; }
+.sheet h2 { margin: 0; font: 700 18px/1.2 var(--font-display); }
+.sheet p { margin: 0; }
+.sheet-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.sheet-actions .spacer { flex: 1; }
+.input {
+  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 10px; width: 100%;
+}
+.input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.form-error { color: var(--danger); font-size: 13px; }
+.btn.link { border-color: transparent; background: none; color: var(--muted); padding-inline: 4px; text-decoration: underline; }
+.btn.link.armed { color: var(--danger); }
