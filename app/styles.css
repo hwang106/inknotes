@@ -140,6 +140,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .page { position: relative; min-height: 100%; touch-action: none; }
 .page canvas.paper { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; display: block; }
 .page canvas.ink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; display: block; pointer-events: none; }
+/* While the pen hovers, the ink layer takes it, so Windows / Samsung handwriting-to-text
+   doesn't see a text box under the pen. Fingers, mouse and keyboard still reach the text. */
+.page.pen-near canvas.ink { pointer-events: auto; cursor: crosshair; }
 .body {
   position: relative; z-index: 1; min-height: 100%;
   padding: 18px max(22px, env(safe-area-inset-right, 0px)) 48px max(22px, env(safe-area-inset-left, 0px));
@@ -213,5 +216,12 @@ body.pip .back-btn, body.pip .popout-btn { display: none; }
 }
 .input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .form-error { color: var(--danger); font-size: 13px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button {
+  flex: 1; font: inherit; font-weight: 500; color: var(--fg); background: none; border: 0;
+  padding: 7px 10px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .btn.link { border-color: transparent; background: none; color: var(--muted); padding-inline: 4px; text-decoration: underline; }
 .btn.link.armed { color: var(--danger); }

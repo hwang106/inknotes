@@ -30,7 +30,7 @@ function writeJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v));
 
 // Pen settings are per device (the Surface and the S25 Ultra want different smoothing).
 const settings = {
-  color: INKS[0], size: 2.5, curve: 50, smooth: IS_ANDROID ? 0 : 60, touchInk: false,
+  color: INKS[0], size: 2.5, curve: 50, smooth: IS_ANDROID ? 0 : 60, touchInk: false, penText: false,
   ...readJSON(SETTINGS_KEY), eraser: false,
 };
 const saveSettings = () => { const { eraser, ...keep } = settings; writeJSON(SETTINGS_KEY, keep); };
@@ -225,6 +225,31 @@ function layout() {
   surface.resize();
 }
 new ResizeObserver(() => layoutSoon()).observe(scroller);
+
+// ---------- pen stays ink (not handwriting-to-text) ----------
+// Windows (Edge's handwriting to text) and Samsung (S Pen to text) turn pen writing on a text box
+// into typed text, and the whole note is a text box. While the pen hovers over the note, the ink
+// layer takes the pen instead, so the system never sees a text box under it.
+function penShield(on) { page.classList.toggle("pen-near", on && !settings.penText); }
+const PEN_EVENTS = ["pointerover", "pointerenter", "pointermove", "pointerdown"];
+let penAt = -1e9;
+const palmTime = e => e.timeStamp - penAt < 1000;   // a touch this soon after the pen is a palm
+for (const type of PEN_EVENTS) page.addEventListener(type, e => {
+  if (e.pointerType === "pen") { penAt = e.timeStamp; penShield(true); }
+  else if (e.pointerType === "mouse" || (type === "pointerdown" && !palmTime(e))) penShield(false);
+}, true);
+page.addEventListener("pointerleave", e => { if (e.pointerType === "pen" && !surface.busy) penShield(false); });
+page.addEventListener("pointerup", e => { if (e.pointerType === "pen" && !page.matches(":hover")) penShield(false); });
+// A finger or mouse tap that lands on the ink layer just after the pen: put the text cursor there.
+el.ink.addEventListener("click", e => {
+  if (e.pointerType === "pen" || settings.touchInk || (e.pointerType === "touch" && palmTime(e))) return;
+  penShield(false);
+  const doc = body.ownerDocument;
+  const r = doc.caretRangeFromPoint ? doc.caretRangeFromPoint(e.clientX, e.clientY) : null;
+  body.focus();
+  if (r && body.contains(r.startContainer)) { const s = doc.getSelection(); s.removeAllRanges(); s.addRange(r); }
+  else placeCaretEnd();
+});
 
 function paintPaper() {
   if (!current) return;
@@ -456,12 +481,22 @@ function syncTools() {
   el.size.value = settings.size; el.sizeVal.textContent = settings.size + " px";
   el.smooth.value = settings.smooth; el.smoothVal.textContent = settings.smooth ? smoothPx(settings.smooth).toFixed(1) + " px" : "off";
   el.curve.value = settings.curve; el.curveVal.textContent = settings.curve < 40 ? "soft" : settings.curve > 60 ? "firm" : "even";
+  el.penMode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.mode === "text") === settings.penText)));
+  el.penModeHint.textContent = settings.penText
+    ? (IS_ANDROID ? "S Pen to text turns writing into typed text. Ink still works outside the text." : "Windows handwriting turns writing into typed text.")
+      + " Switch back to Ink to draw."
+    : "The pen always draws ink. Type with the keyboard, or switch to Text to have your handwriting typed.";
 }
 el.eraser.onclick = () => { settings.eraser = !settings.eraser; syncTools(); };
 el.undo.onclick = () => surface.undo();
 el.touchInk.onclick = () => {
   settings.touchInk = !settings.touchInk; saveSettings(); syncTools();
   toast(settings.touchInk ? "Finger and mouse now draw. Turn this off to type and scroll with them." : "Only the pen draws now.");
+};
+el.penMode.onclick = e => {
+  const b = e.target.closest("button[data-mode]"); if (!b) return;
+  settings.penText = b.dataset.mode === "text"; saveSettings(); syncTools();
+  if (settings.penText) penShield(false);
 };
 el.size.oninput = () => { settings.size = +el.size.value; saveSettings(); syncTools(); };
 el.smooth.oninput = () => { settings.smooth = +el.smooth.value; saveSettings(); syncTools(); };

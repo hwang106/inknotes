@@ -83,6 +83,14 @@
               <label class="label" for="curve">Pressure feel <output id="curveVal"></output></label>
               <input type="range" id="curve" min="0" max="100" step="1">
             </div>
+            <div class="field">
+              <span class="label">Pen on the note</span>
+              <div class="seg" id="penMode" role="group" aria-label="Pen on the note">
+                <button type="button" data-mode="ink" aria-pressed="true">Ink</button>
+                <button type="button" data-mode="text" aria-pressed="false">Text</button>
+              </div>
+              <span class="hint" id="penModeHint"></span>
+            </div>
             <button class="btn danger" id="deleteNote" type="button">Delete note</button>
           </div>
         </details>
