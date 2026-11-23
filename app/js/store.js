@@ -1,0 +1,60 @@
+// On-device storage (IndexedDB). Falls back to memory if the browser blocks storage, so the
+// app still works for the session.
+//
+// notes:  { id, color, html, text, strokes: [{ c, w, g, pts }], created, updated, deleted }
+//         `html` holds typed text and <img data-img="id"> placeholders; `text` is a plain copy
+//         for search and previews. Deleted notes stay as tombstones (deleted: true) so a later
+//         OneDrive sync can pass deletions to other devices.
+// images: { id, blob } — pasted images, stored apart from the note so notes stay small.
+
+const DB_NAME = "inknotes", DB_VERSION = 2;
+let dbPromise = null;
+let memory = null;   // { notes: Map, images: Map } when IndexedDB is unavailable
+
+function open() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(DB_NAME, DB_VERSION); } catch (err) { reject(err); return; }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("notes")) db.createObjectStore("notes", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("images")) db.createObjectStore("images", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("Storage is blocked"));
+  }).catch(err => {
+    console.warn("InkNotes: on-device storage unavailable; notes last only this session.", err);
+    memory = { notes: new Map(), images: new Map() };
+    return null;
+  });
+  return dbPromise;
+}
+
+function run(storeName, mode, fn, memFn) {
+  return open().then(db => {
+    if (!db) return memFn(memory[storeName]);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, mode);
+      const req = fn(tx.objectStore(storeName));
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  });
+}
+
+const clone = o => JSON.parse(JSON.stringify(o));
+
+export const store = {
+  allNotes: () => run("notes", "readonly", s => s.getAll(), m => [...m.values()].map(clone)),
+  getNote: id => run("notes", "readonly", s => s.get(id), m => (m.has(id) ? clone(m.get(id)) : undefined)),
+  putNote: note => {
+    const copy = clone(note);
+    return run("notes", "readwrite", s => s.put(copy), m => { m.set(copy.id, copy); });
+  },
+  putImage: (id, blob) => run("images", "readwrite", s => s.put({ id, blob }), m => { m.set(id, { id, blob }); }),
+  getImage: id => run("images", "readonly", s => s.get(id), m => m.get(id)).then(r => (r ? r.blob : null)),
+  get persistent() { return !memory; },
+};

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>InkNotes</title>
+  <meta name="description" content="Sticky notes you can write on with a pen, type in, and paste images into.">
+  <meta name="theme-color" content="#f2d75c">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app" data-view="list" data-mode="main">
+
+  <aside class="list-pane" aria-label="Notes">
+    <header class="list-head">
+      <h1>InkNotes</h1>
+      <button class="btn primary" id="newNote" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New note
+      </button>
+    </header>
+    <input class="search" id="search" type="search" placeholder="Search notes" aria-label="Search notes" autocomplete="off">
+    <div class="cards" id="cards"></div>
+    <p class="storage-note" id="storageNote" hidden></p>
+  </aside>
+
+  <main class="editor-pane" id="editorPane">
+    <section class="note-view" id="noteView" aria-label="Note">
+      <div class="toolbar" role="toolbar" aria-label="Note tools">
+        <button class="icon-btn back-btn" id="back" type="button" aria-label="All notes" title="All notes">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <button class="icon-btn note-window-only" id="newFromWindow" type="button" aria-label="New note" title="New note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <div class="inks" id="inks" role="group" aria-label="Ink colour"></div>
+        <button class="icon-btn" id="eraser" type="button" aria-pressed="false" aria-label="Eraser" title="Eraser (the pen's side button also erases)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 20h12M4.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 19H8z"/><path d="M9 11l5 5"/></svg>
+        </button>
+        <button class="icon-btn" id="undo" type="button" aria-label="Undo ink" title="Undo ink (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>
+        </button>
+        <button class="icon-btn" id="touchInk" type="button" aria-pressed="false" aria-label="Draw with finger or mouse" title="Off: only the pen draws. On: finger and mouse draw too (palms are still ignored while the pen is near).">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10m0-1.5a1.5 1.5 0 0 1 3 0V11m0-1a1.5 1.5 0 0 1 3 0v4.5a6.5 6.5 0 0 1-6.5 6.5h-.8a5.5 5.5 0 0 1-4.6-2.5L4.6 15a1.5 1.5 0 0 1 2.3-1.9L9 15"/></svg>
+        </button>
+        <button class="icon-btn" id="addImage" type="button" aria-label="Add image" title="Add image (you can also paste or drop one)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>
+        </button>
+        <input type="file" id="imageFile" accept="image/*" multiple hidden>
+        <span class="spacer"></span>
+        <button class="icon-btn desktop-only" id="popout" type="button" aria-label="Open in its own window" title="Open in its own window (resizable)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="13" rx="2"/><path d="M9 3h10a2 2 0 0 1 2 2v10"/></svg>
+        </button>
+        <button class="icon-btn pin-only" id="pin" type="button" aria-pressed="false" aria-label="Keep on top" title="Keep on top of other windows">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16v5"/><path d="M8 3h8l-1.2 6.2L18 13H6l3.2-3.8z"/></svg>
+        </button>
+        <details class="menu" id="menu">
+          <summary class="icon-btn" aria-label="Note options" title="Note colour, pen settings, delete">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>
+          </summary>
+          <div class="menu-panel">
+            <div class="field">
+              <span class="label">Note colour</span>
+              <div class="papers" id="papers" role="group" aria-label="Note colour"></div>
+            </div>
+            <div class="field">
+              <label class="label" for="size">Pen size <output id="sizeVal"></output></label>
+              <input type="range" id="size" min="1" max="12" step="0.5">
+            </div>
+            <div class="field">
+              <label class="label" for="smooth">Smooth <output id="smoothVal"></output></label>
+              <input type="range" id="smooth" min="0" max="100" step="5">
+              <span class="hint">About 1.8 px suits Surface pens; off suits the S Pen. Saved on this device.</span>
+            </div>
+            <div class="field">
+              <label class="label" for="curve">Pressure feel <output id="curveVal"></output></label>
+              <input type="range" id="curve" min="0" max="100" step="1">
+            </div>
+            <button class="btn danger" id="deleteNote" type="button">Delete note</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="scroller" id="scroller">
+        <div class="page" id="page">
+          <canvas class="paper" id="paper" width="1" height="1" aria-hidden="true"></canvas>
+          <div class="body" id="body" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true"
+               aria-label="Note text" data-placeholder="Write with your pen, or type here."></div>
+          <canvas class="ink" id="ink" aria-hidden="true"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <div class="pinned-msg" id="pinnedMsg" hidden>
+      <p>This note is floating on top of your other windows.</p>
+      <button class="btn" id="unpin" type="button">Bring it back here</button>
+    </div>
+    <div class="empty-msg" id="emptyMsg" hidden>
+      <p>No note open.</p>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" hidden>
+  <span id="toastText"></span>
+  <button class="btn" id="toastAction" type="button" hidden>Undo</button>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

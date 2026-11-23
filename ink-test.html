@@ -1,0 +1,570 @@
+<title>InkNotes Pen Test</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen tool — header readout, wrapping toolbar, then a sticky-note sheet filling the rest */
+:root {
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --fg: #1d2330;
+  --muted: #5d6676;
+  --line: #d6dae2;
+  --accent: #2b59c3;          /* fountain-pen blue */
+  --accent-fg: #ffffff;
+  --meter: #2b59c3;
+  --shadow: 0 1px 2px rgba(20,30,50,.08), 0 8px 24px rgba(20,30,50,.10);
+  --paper-yellow: #fff1a8;
+  --paper-green: #cdf0c4;
+  --paper-pink: #ffd0e2;
+  --paper-blue: #cfe6ff;
+  --paper-purple: #e2d6ff;
+  --paper-gray: #e9e9e6;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141820; --panel: #1d2330; --fg: #e6e9ef; --muted: #9aa3b3; --line: #2e3646;
+    --accent: #7ea2ff; --accent-fg: #0f1420; --meter: #7ea2ff;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --paper-yellow: #efdf8e; --paper-green: #b9dcb0; --paper-pink: #ecbccf;
+    --paper-blue: #b8d2ee; --paper-purple: #cdc0ec; --paper-gray: #d6d6d2;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141820; --panel: #1d2330; --fg: #e6e9ef; --muted: #9aa3b3; --line: #2e3646;
+  --accent: #7ea2ff; --accent-fg: #0f1420; --meter: #7ea2ff;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --paper-yellow: #efdf8e; --paper-green: #b9dcb0; --paper-pink: #ecbccf;
+  --paper-blue: #b8d2ee; --paper-purple: #cdc0ec; --paper-gray: #d6d6d2;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); }
+.app {
+  height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;
+  padding-block: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  min-height: 0;
+}
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+h1 { font-family: var(--font-display); font-size: 1.25rem; margin: 0; letter-spacing: -.01em; }
+h1 span { color: var(--muted); font-weight: 500; }
+.readout {
+  margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.chip {
+  font-family: var(--font-body); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--panel);
+}
+.chip.pen { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.meter { width: 90px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--meter); }
+.readout b { color: var(--fg); font-weight: 500; }
+
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+}
+.group { display: flex; align-items: center; gap: 6px; }
+.group > .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.swatch {
+  width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--panel); outline: 1px solid var(--line);
+  cursor: pointer; padding: 0;
+}
+.swatch.sq { border-radius: 5px; }
+.swatch[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+input[type="range"] { width: 110px; accent-color: var(--accent); }
+.val { font-family: var(--font-mono); font-size: 12px; color: var(--muted); min-width: 2.5em; font-variant-numeric: tabular-nums; }
+button.btn {
+  font: 500 13px var(--font-body); color: var(--fg); background: transparent; border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 10px; cursor: pointer;
+}
+button.btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.btn.warn { border-color: #c0392b; color: #c0392b; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.spacer { flex: 1; }
+
+.sheet {
+  flex: 1; min-height: 260px; position: relative; border-radius: 4px; background: var(--paper);
+  box-shadow: var(--shadow); overflow: hidden; --paper: var(--paper-yellow);
+  forced-color-adjust: none;
+}
+.swatch { forced-color-adjust: none; }
+.sheet canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; cursor: crosshair; }
+.hint {
+  position: absolute; left: 0; right: 0; top: 40%; text-align: center; pointer-events: none;
+  color: rgba(40,40,30,.45); font-family: var(--font-display); font-size: 1.05rem; padding: 0 16px;
+}
+footer { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+footer b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+#status { margin-left: auto; }
+@media (max-width: 520px) { .readout { margin-left: 0; } input[type="range"] { width: 84px; } }
+</style>
+
+<div class="app">
+  <header>
+    <h1>InkNotes <span>pen test</span></h1>
+    <div class="readout" aria-live="off">
+      <span class="chip" id="rType">no input yet</span>
+      <span>pressure <b id="rP">0.000</b></span>
+      <span class="meter" aria-hidden="true"><i id="rBar"></i></span>
+      <span>tilt <b id="rTilt">–</b></span>
+      <span>rate <b id="rHz">–</b></span>
+    </div>
+  </header>
+
+  <div class="toolbar" role="toolbar" aria-label="Ink tools">
+    <div class="group" id="inkGroup"><span class="lbl">Ink</span></div>
+    <div class="group">
+      <label class="lbl" for="size">Size</label>
+      <input type="range" id="size" min="1" max="12" step="0.5" value="2.5" title="Line width at full pressure, in screen pixels">
+      <span class="val" id="sizeVal">2.5</span>
+    </div>
+    <div class="group">
+      <label class="lbl" for="curve">Feel</label>
+      <input type="range" id="curve" min="0" max="100" step="1" value="50" title="Left = soft (thick lines with light pressure), right = firm">
+      <span class="val" id="curveVal">even</span>
+    </div>
+    <div class="group">
+      <label class="lbl" for="steady">Smooth</label>
+      <input type="range" id="steady" min="0" max="100" step="5" value="0" title="Smooths pen jitter when you lift the pen. 1–1.5 px suits Surface pens; off suits the S Pen. Saved separately on each device.">
+      <span class="val" id="steadyVal">off</span>
+    </div>
+    <div class="group" id="paperGroup"><span class="lbl">Note</span></div>
+    <div class="spacer"></div>
+    <div class="group">
+      <button class="btn" id="touchDraw" aria-pressed="false" title="Off: only the pen draws. On: fingers draw too, but palms are ignored while the pen is near.">Finger drawing</button>
+      <button class="btn" id="eraser" aria-pressed="false" title="Erase whole strokes. The S Pen side button also erases while held.">Eraser</button>
+      <button class="btn" id="undo">Undo</button>
+      <button class="btn" id="clear">Clear</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint">Write with your pen. Press lightly, then harder.</div>
+  </div>
+
+  <footer>
+    <span><b id="fStrokes">0</b> strokes</span>
+    <span><b id="fPts">0</b> points</span>
+    <span><b id="fKb">0.0</b> KB as vector data</span>
+    <span><b id="fJoins">0</b> light-pressure breaks joined</span>
+    <button class="btn" id="copy" style="padding:2px 8px;font-size:12px">Copy stroke data</button>
+    <span id="status"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const W = 1000;                      // logical note width; all points stored in these units
+  const INKS = ["#1b1b1f", "#2b59c3", "#c0392b", "#1e8a4c", "#7b3fb8"];
+  const PAPERS = ["yellow", "green", "pink", "blue", "purple", "gray"];
+  const KEY = "inknotes-pen-test-v1";
+
+  const cv = document.getElementById("cv");
+  const sheet = document.getElementById("sheet");
+  // Opaque canvas that paints its own paper: a low-latency canvas on Windows can show
+  // transparent areas as black, and contrast themes / forced dark mode recolor CSS
+  // backgrounds but leave canvas pixels alone.
+  const ctx = cv.getContext("2d", { desynchronized: true, alpha: false });
+  let paperColor = "#fff1a8";
+  const $ = id => document.getElementById(id);
+
+  // Smooth (fine jitter smoothing on lift): light on Windows, where MPP pens jitter; off on
+  // Android, where the S Pen is already clean. st.steady holds the 0–100 slider value.
+  const IS_ANDROID = /Android/i.test(navigator.userAgent);
+  const st = { strokes: [], history: [], ink: INKS[0], size: 6, curve: 50, paper: "yellow", touchDraw: false, eraser: false, steady: IS_ANDROID ? 0 : 60 };   // 60 → 1.8 px, chosen from real Surface handwriting tests
+  const smoothPx = v => 3 * v / 100;   // slider 0–100 → radius 0–3 screen px
+  st.size = 2.5;   // pen width at full pressure, in screen pixels (same look on every device)
+
+  // Palm rejection: one pointer owns a stroke; touch never draws while a pen is near.
+  const PALM_MS = 600;
+  let activeId = null, activeType = null, lastPenAt = -1e9, pEma = 0;
+
+  // Very light pressure can drop below the digitizer's contact threshold, which the
+  // browser reports as lift-off. If the pen comes back down quickly near the break,
+  // continue the same stroke and bridge the gap along the hover path.
+  // Only rejoin when the pen was already pressing very lightly before the break and comes
+  // back down lightly: a normal lift between letters drops from full pressure at once.
+  // The S Pen (Android) doesn't drop out at light pressure, and its touchdowns always start
+  // light, so joining would only merge separate marks there (an i's dot into its stem).
+  const JOIN_ENABLED = !IS_ANDROID;
+  const JOIN_MS = 120, LIGHT_P = 0.15, LIGHT_WINDOW_MS = 40;
+  const MIN_JOIN_LEN_PX = 15, MIN_JOIN_MS = 80;   // a dot or tick before the break is never a dropout
+  const JOIN_MAX_TURN_COS = 0.64;                 // pen must carry on within ~50° of its direction
+  const JOIN_STEP_PX = 10, JOIN_PATH_PX = 24;   // screen pixels, so it feels the same on every device
+  let lastEnd = null, hoverTrail = [], joins = 0;
+
+  // ---------- fine smoothing on lift (Smooth) ----------
+  // Ink is drawn exactly where the pen is while writing (no lag). When the pen lifts, each
+  // point is averaged with its neighbours along the line (Gaussian over arc length, radius
+  // in screen px). A radius of ~1–1.5 px removes digitizer jitter (MPP pens) while letter
+  // curves, which are much larger, keep their shape. Ends stay where the pen touched.
+  function smoothStroke(P, sigma) {
+    const n = P.length; if (n < 3 || sigma <= 0) return P;
+    const s = [0];
+    for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+    const total = s[n - 1];
+    return P.map((p, i) => {
+      if (i === 0 || i === n - 1) return p;
+      const sg = Math.min(sigma, s[i] / 2, (total - s[i]) / 2);   // shrink near the ends
+      if (sg < 1e-3) return p;
+      let wx = 0, wy = 0, ws = 0;
+      for (let j = i; j >= 0 && s[i] - s[j] <= 3 * sg; j--) {
+        const w = Math.exp(-((s[i] - s[j]) ** 2) / (2 * sg * sg)); wx += w * P[j][0]; wy += w * P[j][1]; ws += w;
+      }
+      for (let j = i + 1; j < n && s[j] - s[i] <= 3 * sg; j++) {
+        const w = Math.exp(-((s[j] - s[i]) ** 2) / (2 * sg * sg)); wx += w * P[j][0]; wy += w * P[j][1]; ws += w;
+      }
+      return [wx / ws, wy / ws, p[2], p[3]];
+    });
+  }
+  let scale = 1, dpr = 1;
+  let active = null;                   // stroke in progress
+  let erasing = false;
+  let samples = [];                    // timestamps for report-rate
+
+  // ---------- persistence ----------
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(KEY) || "null");
+      if (d && d.v === 1) {
+        st.strokes = d.strokes || []; st.paper = d.paper || st.paper;
+        if (d.sv === 2) {                // settings from this version (older ones had different defaults)
+          st.touchDraw = !!d.touchDraw;
+          if (typeof d.smooth === "number") st.steady = d.smooth;   // old "steady" values meant something else
+          if (typeof d.sizePx === "number") st.size = d.sizePx;
+        }
+      }
+    } catch (_) {}
+  }
+  let saveT = 0;
+  function save() {
+    clearTimeout(saveT);
+    saveT = setTimeout(() => {
+      try { localStorage.setItem(KEY, JSON.stringify(serialize())); } catch (_) {}
+    }, 300);
+    stats();
+  }
+  function serialize() {
+    return { v: 1, sv: 2, paper: st.paper, touchDraw: st.touchDraw, smooth: st.steady, sizePx: st.size, strokes: st.strokes };
+  }
+
+  // ---------- pressure → width ----------
+  function gammaOf(curve) { return Math.pow(2, (curve - 50) / 30); }   // 0 → ~0.31 (soft), 100 → ~3.2 (firm)
+  function widthOf(s, p) {
+    // Narrow range (40–100% of size) keeps handwriting even, like a fine pen.
+    const w = s.w * (0.4 + 0.6 * Math.pow(Math.max(0, Math.min(1, p)), s.g));
+    return Math.max(w, 0.9 * dpr / scale);   // never thinner than ~0.9 screen pixels
+  }
+
+  // ---------- drawing ----------
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  function seg(s, i) {
+    const P = s.pts, a = i === 1 ? P[0] : mid(P[i - 2], P[i - 1]), b = mid(P[i - 1], P[i]), c = P[i - 1];
+    ctx.strokeStyle = s.c; ctx.lineWidth = widthOf(s, c[2]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(c[0], c[1], b[0], b[1]); ctx.stroke();
+  }
+  function tail(s) {
+    const P = s.pts, n = P.length;
+    if (n === 1) {
+      ctx.fillStyle = s.c; ctx.beginPath();
+      ctx.arc(P[0][0], P[0][1], widthOf(s, P[0][2]) / 2, 0, Math.PI * 2); ctx.fill(); return;
+    }
+    const a = mid(P[n - 2], P[n - 1]);
+    ctx.strokeStyle = s.c; ctx.lineWidth = widthOf(s, P[n - 1][2]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(P[n - 1][0], P[n - 1][1]); ctx.stroke();
+  }
+  function drawStroke(s) { for (let i = 1; i < s.pts.length; i++) seg(s, i); tail(s); }
+  function redraw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = paperColor;
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const s of st.strokes) drawStroke(s);
+    if (active) for (let i = 1; i < active.pts.length; i++) seg(active, i);
+    $("hint").hidden = st.strokes.length > 0 || !!active;
+  }
+  function resize() {
+    const r = sheet.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+    scale = (r.width / W) * dpr;
+    redraw();
+  }
+
+  // ---------- input ----------
+  function toLogical(e) {
+    const r = cv.getBoundingClientRect(), k = W / r.width;
+    return [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
+  }
+  function pressureOf(e) {
+    if (e.pointerType === "mouse") return 0.5;
+    if (e.pressure === 0 && e.buttons) return 0.5;
+    return e.pressure;
+  }
+  const isEraseButton = e => e.pointerType === "pen" && ((e.buttons & 2) || (e.buttons & 32));
+
+  // Readout updates once per frame, not once per pen sample, so it never competes with the ink.
+  let ro = null, roQueued = false;
+  function showReadout(e, p) {
+    ro = { type: e.pointerType, hover: !e.buttons, p, tx: e.tiltX, ty: e.tiltY };
+    if (!roQueued) { roQueued = true; requestAnimationFrame(paintReadout); }
+  }
+  function paintReadout() {
+    roQueued = false; if (!ro) return;
+    const t = $("rType");
+    t.textContent = ro.type + (ro.hover ? " · hover" : "");
+    t.className = "chip" + (ro.type === "pen" ? " pen" : "");
+    $("rP").textContent = ro.p.toFixed(3);
+    $("rBar").style.width = (Math.min(1, ro.p) * 100) + "%";
+    $("rTilt").textContent = (ro.tx || ro.ty) ? `${ro.tx}°, ${ro.ty}°` : "–";
+  }
+
+  function eraseAt(x, y) {
+    const r = 14, r2 = r * r, removed = [];
+    for (let i = st.strokes.length - 1; i >= 0; i--) {
+      const s = st.strokes[i];
+      if (s.pts.some(q => (q[0] - x) ** 2 + (q[1] - y) ** 2 < r2 + (s.w / 2) ** 2)) {
+        removed.push({ s, i }); st.strokes.splice(i, 1);
+      }
+    }
+    if (removed.length) { st.history.push({ t: "erase", removed }); redraw(); save(); }
+  }
+
+  let t0 = 0;
+  function addPoint(x, y, p, ts) {
+    pEma += 0.35 * (p - pEma);           // smooth pressure so width doesn't jump between samples
+    const P = active.pts, q = P[P.length - 1];
+    if ((x - q[0]) ** 2 + (y - q[1]) ** 2 < 0.25) return;
+    P.push([x, y, pEma, Math.round(ts - t0)]);
+    samples.push(ts);
+    seg(active, P.length - 1);
+  }
+  function resume(e, x, y, p) {
+    const L = lastEnd; lastEnd = null;
+    if (!L || e.pointerType !== "pen" || L.s !== st.strokes[st.strokes.length - 1]) return false;
+    if (e.timeStamp - L.t > JOIN_MS || p > LIGHT_P) return false;
+    // The pen keeps moving while it hovers, so follow the hover path: each step must be
+    // short and the whole gap must be short, or it was a deliberate lift.
+    const q = L.s.pts[L.s.pts.length - 1];
+    const chain = [[q[0], q[1]], ...hoverTrail, [x, y]];
+    const pxPerUnit = cv.getBoundingClientRect().width / W;
+    let len = 0;
+    for (let i = 1; i < chain.length; i++) {
+      const d = Math.hypot(chain[i][0] - chain[i - 1][0], chain[i][1] - chain[i - 1][1]) * pxPerUnit;
+      if (d > JOIN_STEP_PX) return false;
+      len += d;
+    }
+    if (len > JOIN_PATH_PX) return false;
+    // A dropout continues the line; a new mark usually heads off in another direction.
+    if (Math.hypot(x - q[0], y - q[1]) * pxPerUnit > 3) {
+      const P = L.s.pts; let j = P.length - 1;
+      while (j > 0 && Math.hypot(q[0] - P[j][0], q[1] - P[j][1]) * pxPerUnit < 10) j--;
+      const ex = q[0] - P[j][0], ey = q[1] - P[j][1], bx = x - q[0], by = y - q[1];
+      const cos = (ex * bx + ey * by) / ((Math.hypot(ex, ey) * Math.hypot(bx, by)) || 1);
+      if (cos < JOIN_MAX_TURN_COS) return false;
+    }
+    st.strokes.pop();
+    const h = st.history[st.history.length - 1];
+    if (h && h.t === "add" && h.s === L.s) st.history.pop();
+    active = L.s; t0 = L.t0; pEma = p; samples = [];
+    redraw();
+    for (const [hx, hy, ht] of hoverTrail) addPoint(hx, hy, 0, ht);   // bridge at lightest width
+    addPoint(x, y, p, e.timeStamp);
+    hoverTrail = []; joins++; stats();
+    return true;
+  }
+  const touchBlocked = e => e.pointerType === "touch" && (!st.touchDraw || e.timeStamp - lastPenAt < PALM_MS);
+
+  cv.addEventListener("pointerdown", e => {
+    if (e.pointerType === "pen") {
+      lastPenAt = e.timeStamp;
+      // A palm that landed just before the pen: throw its stroke away.
+      if (active && activeType === "touch") { active = null; activeId = null; redraw(); }
+    }
+    if (touchBlocked(e)) return;
+    if (activeId !== null || erasing) return;          // one pointer owns the note at a time
+    if (e.button !== 0 && !isEraseButton(e) && e.pointerType === "mouse") return;
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    activeId = e.pointerId; activeType = e.pointerType;
+    const [x, y] = toLogical(e), p = pressureOf(e);
+    showReadout(e, p);
+    if (st.eraser || isEraseButton(e)) { erasing = true; lastEnd = null; eraseAt(x, y); return; }
+    if (resume(e, x, y, p)) { e.preventDefault(); return; }
+    t0 = e.timeStamp; pEma = p;
+    // Width is chosen in screen pixels but stored in note units, so the ink scales with the note.
+    const wUnits = +(st.size * W / cv.getBoundingClientRect().width).toFixed(3);
+    active = { c: st.ink, w: wUnits, g: +gammaOf(st.curve).toFixed(3), pts: [[x, y, p, 0]] };
+    $("hint").hidden = true;
+    samples = [];
+    e.preventDefault();
+  });
+
+  cv.addEventListener("pointermove", e => {
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    const last = evs[evs.length - 1] || e;
+    if (e.pointerType === "pen") lastPenAt = e.timeStamp;
+    if (activeId !== null && e.pointerId !== activeId) return;   // ignore palms and other fingers
+    if (!active && !erasing) {
+      if (lastEnd && e.pointerType === "pen" && !e.buttons) {
+        for (const ev of evs) {
+          if (ev.timeStamp - lastEnd.t > JOIN_MS) break;
+          const [hx, hy] = toLogical(ev); hoverTrail.push([hx, hy, ev.timeStamp]);
+        }
+      }
+      showReadout(last, e.buttons ? pressureOf(last) : 0); return;
+    }
+    for (const ev of evs) {
+      const [x, y] = toLogical(ev);
+      if (erasing) { eraseAt(x, y); continue; }
+      addPoint(x, y, pressureOf(ev), ev.timeStamp);
+    }
+    showReadout(last, pressureOf(last));
+    const now = e.timeStamp;
+    samples = samples.filter(t => now - t < 1000);
+    if (samples.length > 5) {
+      const span = (samples[samples.length - 1] - samples[0]) / 1000;
+      if (span > 0.2) $("rHz").textContent = Math.round((samples.length - 1) / span) + " Hz";
+    }
+  });
+
+  function finish(e) {
+    if (e && activeId !== null && e.pointerId !== activeId) return;   // a palm lifting doesn't end the pen's stroke
+    if (e && e.pointerType === "pen") lastPenAt = e.timeStamp;
+    activeId = null;
+    if (erasing) { erasing = false; return; }
+    if (!active) return;
+    tail(active);
+    // Check how light the ending was before smoothing changes the samples.
+    const R = active.pts, tEnd = R[R.length - 1][3];
+    let endP = 0;
+    for (let i = R.length - 1; i >= 0 && R[i][3] >= tEnd - LIGHT_WINDOW_MS; i--) endP = Math.max(endP, R[i][2]);
+    if (st.steady > 0) {
+      const pxPerUnit = cv.getBoundingClientRect().width / W;
+      active.pts = smoothStroke(active.pts, smoothPx(st.steady) / pxPerUnit);
+    }
+    active.pts = active.pts.map(q => [+q[0].toFixed(1), +q[1].toFixed(1), +q[2].toFixed(3), q[3]]);
+    st.strokes.push(active); st.history.push({ t: "add", s: active });
+    if (st.steady > 0) { active = null; redraw(); }
+    let lenPx = 0;
+    for (let i = 1; i < R.length; i++) lenPx += Math.hypot(R[i][0] - R[i - 1][0], R[i][1] - R[i - 1][1]);
+    lenPx *= cv.getBoundingClientRect().width / W;
+    const isLine = lenPx >= MIN_JOIN_LEN_PX && tEnd >= MIN_JOIN_MS;
+    lastEnd = JOIN_ENABLED && isLine && e && e.pointerType === "pen" && endP <= LIGHT_P
+      ? { s: st.strokes[st.strokes.length - 1], t: e.timeStamp, t0 } : null;
+    hoverTrail = [];
+    active = null; save();
+  }
+  cv.addEventListener("pointerup", finish);
+  cv.addEventListener("pointercancel", finish);
+  cv.addEventListener("contextmenu", e => e.preventDefault());
+
+  // ---------- toolbar ----------
+  function pressGroup(container, el) {
+    container.querySelectorAll(".swatch").forEach(b => b.setAttribute("aria-pressed", b === el ? "true" : "false"));
+  }
+  const inkGroup = $("inkGroup");
+  INKS.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.className = "swatch"; b.style.background = c; b.id = "ink" + i;
+    b.setAttribute("aria-label", "Ink color " + (i + 1)); b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.onclick = () => { st.ink = c; pressGroup(inkGroup, b); if (st.eraser) toggleEraser(false); };
+    inkGroup.appendChild(b);
+  });
+  const paperGroup = $("paperGroup");
+  PAPERS.forEach(name => {
+    const b = document.createElement("button");
+    b.className = "swatch sq"; b.style.background = `var(--paper-${name})`; b.id = "paper-" + name;
+    b.setAttribute("aria-label", name + " note"); b.setAttribute("aria-pressed", "false");
+    b.onclick = () => { st.paper = name; applyPaper(); save(); };
+    paperGroup.appendChild(b);
+  });
+  function applyPaper() {
+    sheet.style.setProperty("--paper", `var(--paper-${st.paper})`);
+    pressGroup(paperGroup, $("paper-" + st.paper));
+    paperColor = getComputedStyle(sheet).getPropertyValue("--paper").trim() || "#fff1a8";
+    redraw();
+  }
+
+  $("size").oninput = e => { st.size = +e.target.value; $("sizeVal").textContent = st.size; save(); };
+  $("curve").oninput = e => {
+    st.curve = +e.target.value;
+    $("curveVal").textContent = st.curve < 40 ? "soft" : st.curve > 60 ? "firm" : "even";
+  };
+  function steadyLabel() {
+    $("steadyVal").textContent = st.steady === 0 ? "off" : smoothPx(st.steady).toFixed(1) + " px";
+  }
+  $("steady").oninput = e => { st.steady = +e.target.value; steadyLabel(); save(); };
+  $("touchDraw").onclick = () => {
+    st.touchDraw = !st.touchDraw; $("touchDraw").setAttribute("aria-pressed", st.touchDraw); save();
+    status(st.touchDraw ? "Fingers can draw. Palms are still ignored while the pen is near." : "Only the pen draws.");
+  };
+  function toggleEraser(on) { st.eraser = on; $("eraser").setAttribute("aria-pressed", on); }
+  $("eraser").onclick = () => toggleEraser(!st.eraser);
+
+  function undo() {
+    const h = st.history.pop(); if (!h) return;
+    if (h.t === "add") { const i = st.strokes.lastIndexOf(h.s); if (i >= 0) st.strokes.splice(i, 1); }
+    else if (h.t === "erase") { for (const { s, i } of h.removed.slice().reverse()) st.strokes.splice(i, 0, s); }
+    else if (h.t === "clear") { st.strokes = h.prev; }
+    redraw(); save();
+  }
+  $("undo").onclick = undo;
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+  });
+
+  let clearArmed = 0;
+  $("clear").onclick = () => {
+    const b = $("clear");
+    if (!clearArmed) {
+      b.textContent = "Tap again to clear"; b.classList.add("warn");
+      clearArmed = setTimeout(() => { clearArmed = 0; b.textContent = "Clear"; b.classList.remove("warn"); }, 3000);
+      return;
+    }
+    clearTimeout(clearArmed); clearArmed = 0; b.textContent = "Clear"; b.classList.remove("warn");
+    if (!st.strokes.length) return;
+    st.history.push({ t: "clear", prev: st.strokes }); st.strokes = []; redraw(); save();
+    status("Cleared. Undo brings it back.");
+  };
+
+  function stats() {
+    $("fStrokes").textContent = st.strokes.length;
+    $("fPts").textContent = st.strokes.reduce((n, s) => n + s.pts.length, 0);
+    $("fKb").textContent = (JSON.stringify(serialize()).length / 1024).toFixed(1);
+    $("fJoins").textContent = joins;
+  }
+  let statusT = 0;
+  function status(msg) {
+    $("status").textContent = msg; clearTimeout(statusT);
+    statusT = setTimeout(() => $("status").textContent = "", 3000);
+  }
+  $("copy").onclick = () => {
+    const text = JSON.stringify(serialize());
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => status("Stroke data copied."), () => status("This browser blocked copying."));
+    } else status("This browser blocked copying.");
+  };
+
+  // ---------- boot ----------
+  load();
+  $("touchDraw").setAttribute("aria-pressed", st.touchDraw);
+  $("size").value = st.size; $("sizeVal").textContent = st.size;
+  $("steady").value = st.steady; steadyLabel();
+  applyPaper();
+  // repaint the paper when the light/dark theme changes
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyPaper); } catch (_) {}
+  new MutationObserver(applyPaper).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  new ResizeObserver(resize).observe(sheet);
+  resize(); stats();
+})();
+</script>
