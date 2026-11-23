@@ -225,3 +225,8 @@ body.pip .back-btn, body.pip .popout-btn { display: none; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .btn.link { border-color: transparent; background: none; color: var(--muted); padding-inline: 4px; text-decoration: underline; }
 .btn.link.armed { color: var(--danger); }
+
+/* Phones zoom in on any text box with text smaller than 16px when it gets focus, and stay zoomed. */
+@media (pointer: coarse) {
+  input:not(#_), select:not(#_), textarea:not(#_) { font-size: 16px; }
+}
