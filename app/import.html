@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Import notes</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: start center; padding: 48px 16px; }
+    main { width: min(520px, 100%); background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); padding: 24px; }
+    h1 { font: 700 22px/1.2 var(--font-display); margin: 0 0 8px; }
+    p { color: var(--muted); margin: 0 0 14px; }
+    .facts { margin: 0 0 16px; padding: 0; list-style: none; display: grid; gap: 4px; }
+    .facts b { color: var(--fg); }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .imp-btn { font: 600 14px var(--font-body); padding: 9px 16px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; text-decoration: none; }
+    .imp-btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .imp-btn:disabled { opacity: .5; cursor: default; }
+    progress { width: 100%; margin-top: 14px; }
+    .err { color: var(--danger); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Import notes</h1>
+  <p id="intro">Choose the file made by the Sticky Notes export. The notes are added on this device, and OneDrive sync uploads them. Notes imported before are left alone, so running it twice is safe.</p>
+  <ul class="facts" id="facts" hidden></ul>
+  <div class="actions">
+    <label class="imp-btn" id="pickLabel">Choose file<input type="file" id="pick" accept=".json,application/json" hidden></label>
+    <button class="imp-btn primary" id="go" type="button" hidden>Import</button>
+    <a class="imp-btn" id="open" href="./" hidden>Open InkNotes</a>
+  </div>
+  <progress id="bar" hidden></progress>
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+<script type="module" src="js/import.js"></script>
+</body>
+</html>

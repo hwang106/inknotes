@@ -90,7 +90,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 addEventListener("pagehide", () => { flushSaves(); });
 
 // ---------- note body: typed text + images ----------
-const ALLOWED = new Set(["DIV", "P", "BR", "B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "IMG", "SPAN"]);
+const ALLOWED = new Set(["DIV", "P", "BR", "B", "STRONG", "I", "EM", "U", "S", "UL", "OL", "LI", "IMG", "SPAN"]);
 const DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META", "TEMPLATE", "SVG", "MATH"]);
 function cleanNode(node) {
   for (const child of [...node.childNodes]) {
