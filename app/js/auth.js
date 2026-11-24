@@ -21,7 +21,15 @@ export const redirectUri = () => location.origin + location.pathname.replace(/in
 
 function load() { try { return JSON.parse(localStorage.getItem(TOKENS)) || null; } catch (_) { return null; } }
 function save(v) { try { v ? localStorage.setItem(TOKENS, JSON.stringify(v)) : localStorage.removeItem(TOKENS); } catch (_) {} }
-const withLock = (name, fn) => (navigator.locks ? navigator.locks.request(name, fn) : fn());
+// A token refresh takes a second or two. If another window holds the lock much longer it was
+// probably frozen in the background (phones do this), so take the lock from it.
+const withLock = (name, fn) => {
+  if (!navigator.locks) return fn();
+  if (!AbortSignal.timeout) return navigator.locks.request(name, fn);
+  return navigator.locks.request(name, { signal: AbortSignal.timeout(20e3) }, fn)
+    .catch(err => { if (err.name === "TimeoutError" || err.name === "AbortError") return navigator.locks.request(name, { steal: true }, fn); throw err; });
+};
+export const timeout = ms => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
 
 export function account() {
   const a = load();
@@ -71,6 +79,7 @@ async function token(params) {
   const res = await fetch(`${AUTH}/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: CLIENT_ID, scope: BASE_SCOPES, ...params }),
+    signal: timeout(30e3),
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(j.error_description || j.error || `Sign-in failed (${res.status})`); e.code = j.error; throw e; }

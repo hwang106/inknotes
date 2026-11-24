@@ -11,6 +11,7 @@ import { syncOnce } from "./sync-engine.js";
 import { newKeyFile, keyFromFile } from "./crypt.js";
 
 const SILENT_TRIED = "inknotes-silent-signin";
+const STALE_MS = 30e3;   // no heartbeat for this long: the window holding the sync lock is frozen
 const KEY_FILE = "key.json";
 const td = new TextDecoder(), te = new TextEncoder();
 
@@ -33,7 +34,30 @@ export function createSync({ folder, local, stateKey, images = false }) {
     if (state !== "error") delete status.message;
     hooks.onStatus(status);
   }
-  const withLock = fn => (navigator.locks ? navigator.locks.request("inknotes-sync-" + folder, fn) : fn());
+  // One pass per folder at a time, across windows and both apps. The pass holding the lock
+  // stamps a heartbeat every few seconds; a phone can freeze a background window mid-pass with the
+  // lock still held, so when the heartbeat stops, the waiting window takes the lock over.
+  const LOCK = "inknotes-sync-" + folder, BEAT = "syncBeat:" + folder;
+  async function holding(fn) {
+    const beat = () => store.setMeta(BEAT, Date.now()).catch(() => {});
+    await beat();
+    const iv = setInterval(beat, 5e3);
+    try { return await fn(); } finally { clearInterval(iv); }
+  }
+  async function withLock(fn) {
+    if (!navigator.locks) return fn();
+    const waitStart = Date.now();
+    for (;;) {
+      const got = await navigator.locks.request(LOCK, { ifAvailable: true }, lock => (lock ? holding(fn).then(v => ({ v })) : null));
+      if (got) return got.v;
+      const last = (await store.getMeta(BEAT)) || 0;
+      if (Date.now() - waitStart > 6e3 && Date.now() - last > STALE_MS) {
+        return navigator.locks.request(LOCK, { steal: true }, () => holding(fn));
+      }
+      set("syncing", { detail: "Waiting for another window" });
+      await new Promise(r => setTimeout(r, 2e3));
+    }
+  }
 
   async function run() {
     if (!CLIENT_ID) return set("unconfigured");
@@ -75,7 +99,10 @@ export function createSync({ folder, local, stateKey, images = false }) {
         }
         set("reauth");
       } else if (err.signedOut) set("signedOut");
-      else if (err instanceof TypeError || !navigator.onLine) set("offline");
+      else if (err instanceof TypeError || err.name === "TimeoutError" || err.name === "AbortError" || !navigator.onLine) {
+        set("offline");
+        if (navigator.onLine) schedule(10e3);   // OneDrive dropped or stopped answering: try again soon
+      }
       else { console.warn("Sync:", err); set("error", { message: err.message || String(err) }); }
     } finally {
       running = false; mayRedirect = false;

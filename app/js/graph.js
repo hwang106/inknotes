@@ -1,6 +1,6 @@
 // The OneDrive app folder (Apps/InkNotes) through Microsoft Graph, shaped as the `drive` that
 // sync-engine.js expects.
-import { accessToken } from "./auth.js";
+import { accessToken, timeout } from "./auth.js";
 import { GRAPH } from "./config.js";
 
 const ROOT = GRAPH + "/me/drive/special/approot";
@@ -15,7 +15,8 @@ function failure(res, what) {
 
 async function call(url, opts = {}, attempt = 0) {
   const token = await accessToken({ fresh: attempt > 0 && opts._expired });
-  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + token } });
+  // Phones can leave a request hanging (weak signal, app sent to the background): give up and let sync retry.
+  const res = await fetch(url, { signal: timeout(opts.method === "PUT" ? 60e3 : 30e3), ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + token } });
   if (res.status === 401 && attempt === 0) return call(url, { ...opts, _expired: true }, 1);
   if ((res.status === 429 || res.status === 503) && attempt < 2) {
     await sleep(Math.min(30, Number(res.headers.get("Retry-After")) || 5) * 1000);
@@ -46,7 +47,7 @@ export const graphDrive = {
       if (!res.ok) throw failure(res, "Reading OneDrive");
       url = (await res.json())["@microsoft.graph.downloadUrl"];
     }
-    const res = await fetch(url);   // short-lived pre-signed link: no token needed
+    const res = await fetch(url, { signal: timeout(60e3) });   // short-lived pre-signed link: no token needed
     if (res.status === 404) return null;
     if (!res.ok) throw failure(res, "Downloading from OneDrive");
     return new Uint8Array(await res.arrayBuffer());
