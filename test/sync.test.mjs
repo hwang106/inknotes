@@ -172,4 +172,20 @@ await test("an edit made here uploads before a big download", async () => {
   assert.equal(P.notes.get("p0").title, "edited on Q"); assert.ok(P.notes.has("q-new"));
 });
 
+await test("a failed check (passphrase changed elsewhere) stops the pass before anything uploads", async () => {
+  const D = fakeDrive(), P = fakeDevice();
+  await P.putNote(note("k1", "Secret", 1));
+  const check = async () => { throw Object.assign(new Error("Passphrase changed"), { keyChanged: true }); };
+  await assert.rejects(syncOnce({ drive: D, local: P, key, state: P.state, check }), e => e.keyChanged);
+  assert.equal(D.writes, 0);
+});
+
+await test("the listing cache is handed to the drive and kept in the state", async () => {
+  const D = fakeDrive(), P = fakeDevice(), list = D.list;
+  let seen;
+  D.list = async (folder, cache) => { seen = cache; cache.link = "next"; return list(folder); };
+  await syncOnce({ drive: D, local: P, key, state: P.state });
+  assert.equal(P.state.listing, seen); assert.equal(P.state.listing.link, "next");
+});
+
 console.log(`\n${passed} tests passed`);

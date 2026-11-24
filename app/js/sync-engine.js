@@ -8,7 +8,7 @@
 //   images/<id>.bin     one pasted image (images never change, so each uploads once)
 //   todo/<id>.json      one task list or task
 //
-// drive: { list(folder) -> [{ name, etag, url? }], read(folder, name, entry?) -> Uint8Array | null,
+// drive: { list(folder, cache?) -> [{ name, etag, url? }], read(folder, name, entry?) -> Uint8Array | null,
 //          write(folder, name, bytes, ifMatch?) -> { etag }  (throws err.status 412 on a stale ifMatch) }
 // local: { all(), get(id), put(record), getImage?(id) -> Blob | null, putImage?(id, blob) }
 // state: { notes: { id: { etag, updated } }, images: { id: true } }  — what was last seen in OneDrive.
@@ -31,12 +31,15 @@ async function eachAtOnce(items, fn) {
   await Promise.all(Array.from({ length: Math.min(AT_ONCE, items.length) }, worker));
 }
 
-export async function syncOnce({ drive, local, key, state, folder = "notes", images = true, onProgress = () => {} }) {
+export async function syncOnce({ drive, local, key, state, folder = "notes", images = true, check = null, onProgress = () => {} }) {
   state.notes = state.notes || {}; state.images = state.images || {};
   const result = { pulled: [], pushed: 0, conflicts: 0 };
 
   const remote = new Map();
-  for (const e of await drive.list(folder)) {
+  state.listing = state.listing || {};   // lets the drive fetch only what changed since last time
+  // check (optional): runs alongside the listing and may throw to stop the pass before any upload.
+  const [listing] = await Promise.all([drive.list(folder, state.listing), check ? check() : null]);
+  for (const e of listing) {
     const m = /^(.+)\.json$/.exec(e.name);
     if (m) remote.set(m[1], e);
   }

@@ -25,8 +25,48 @@ async function call(url, opts = {}, attempt = 0) {
   return res;
 }
 
+// The folder's files from OneDrive's change feed: the first call lists everything, later calls
+// fetch only what changed since. `cache` ({ link, items: { id: { name, etag } } }) is kept in the
+// sync state between passes. Returns null if the feed isn't available, so the caller lists instead.
+async function listByDelta(folder, cache) {
+  let url = cache.link || `${ROOT}:/${path("", folder)}:/delta`, fresh = !cache.link;
+  const items = fresh ? {} : { ...cache.items }, urls = {};
+  for (;;) {
+    const res = await call(url);
+    if (res.status === 404 && fresh) { cache.link = null; cache.items = {}; return []; }   // folder not made yet
+    if ((res.status === 410 || res.status === 404) && !fresh) {   // OneDrive wants a full re-list, or the folder was removed
+      url = `${ROOT}:/${path("", folder)}:/delta`; fresh = true;
+      for (const k of Object.keys(items)) delete items[k];
+      continue;
+    }
+    if (!res.ok) return null;
+    const j = await res.json();
+    for (const i of j.value) {
+      if (i.deleted) {
+        if (i.id === cache.folderId) for (const k of Object.keys(items)) delete items[k];   // the whole folder went
+        delete items[i.id]; continue;
+      }
+      if (i.folder && i.name === folder) cache.folderId = i.id;
+      if (!i.file) continue;
+      items[i.id] = { name: i.name, etag: i.eTag };
+      if (i["@microsoft.graph.downloadUrl"]) urls[i.id] = i["@microsoft.graph.downloadUrl"];
+    }
+    if (j["@odata.nextLink"]) { url = j["@odata.nextLink"]; continue; }
+    if (!j["@odata.deltaLink"]) return null;
+    cache.link = j["@odata.deltaLink"]; cache.items = items;
+    // Download links expire, so only links from this response are passed on.
+    return Object.entries(items).map(([id, e]) => ({ name: e.name, etag: e.etag, url: urls[id] }));
+  }
+}
+
 export const graphDrive = {
-  async list(folder) {
+  // cache: optional object kept between passes; when given, only changes are fetched.
+  async list(folder, cache) {
+    if (cache && !cache.off) {
+      const out = await listByDelta(folder, cache);
+      if (out) return out;
+      cache.off = true; cache.link = null; cache.items = {};   // feed not supported here: list in full from now on
+    }
     const out = [];
     let url = `${ROOT}:/${path("", folder)}:/children?$top=200`;
     while (url) {

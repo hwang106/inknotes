@@ -26,6 +26,8 @@ const TYPES = {
 
 // ---------- pretend Microsoft ----------
 const files = new Map();   // "notes/x.json" -> { bytes, etag }
+const removed = [];   // { id, ver } for the delta feed
+let verN = 0, deltaCalls = 0, childrenCalls = 0;
 let etagN = 0, tokenN = 0, expireNext = false, silentFails = false, tasksGranted = false;
 // Pretend Microsoft To Do, for testing InkTasks' import.
 const TODO = [
@@ -66,6 +68,7 @@ async function fake(req, res, url) {
     const id = b64url({ alg: "none" }) + "." + b64url({ name: "Test User", preferred_username: "test.user@example.com" }) + ".sig";
     return json(res, 200, { access_token: "fake-at-" + (++tokenN), refresh_token: "fake-rt-" + tokenN, expires_in: 3600, id_token: id }), true;
   }
+  if (p === "/__fake/calls") return json(res, 200, { delta: deltaCalls, children: childrenCalls }), true;
   if (p === "/__fake/state") {
     return json(res, 200, [...files].map(([k, f]) => ({ path: k, size: f.bytes.length, etag: f.etag, text: k === "key.json" ? f.bytes.toString() : undefined }))), true;
   }
@@ -94,11 +97,22 @@ async function fake(req, res, url) {
   if (p.startsWith(G)) {
     if (!/^Bearer fake-at-/.test(req.headers.authorization || "")) return json(res, 401, { error: { code: "InvalidAuthenticationToken" } }), true;
     if (p === G && req.method === "GET") return json(res, 200, { id: "fake-approot", name: "InkNotes", parentReference: { driveId: "fake-drive", driveType: "personal" } }), true;
-    const m = /^:\/(.+?)(:\/(children|content))?$/.exec(decodeURIComponent(p.slice(G.length)));
+    const m = /^:\/(.+?)(:\/(children|content|delta))?$/.exec(decodeURIComponent(p.slice(G.length)));
     if (!m) return json(res, 400, { error: { code: "invalidRequest" } }), true;
     const item = m[1], action = m[3];
     const meta = k => ({ name: k.split("/").pop(), eTag: files.get(k).etag, file: {}, "@microsoft.graph.downloadUrl": `${url.origin}/__fake/dl/${encodeURIComponent(k)}` });
+    if (action === "delta" && req.method === "GET") {
+      // Like OneDrive personal: everything under the folder changed since the token, plus removals.
+      deltaCalls++;
+      const since = Number(url.searchParams.get("token") || 0);
+      const kids = [...files.keys()].filter(k => k.startsWith(item + "/"));
+      if (!kids.length && !since) return json(res, 404, { error: { code: "itemNotFound" } }), true;
+      const value = [{ id: item, name: item, folder: {} }, ...kids.filter(k => files.get(k).ver > since).map(k => ({ id: k, ...meta(k) })),
+        ...removed.filter(r => r.ver > since && r.id.startsWith(item + "/")).map(r => ({ id: r.id, deleted: {} }))];
+      return json(res, 200, { value, "@odata.deltaLink": `${url.origin}${G}:/${item}:/delta?token=${verN}` }), true;
+    }
     if (action === "children" && req.method === "GET") {
+      childrenCalls++;
       const kids = [...files.keys()].filter(k => k.startsWith(item + "/") && !k.slice(item.length + 1).includes("/"));
       if (!kids.length) return json(res, 404, { error: { code: "itemNotFound" } }), true;
       return json(res, 200, { value: kids.map(meta) }), true;
@@ -106,12 +120,12 @@ async function fake(req, res, url) {
     if (action === "content" && req.method === "PUT") {
       const f = files.get(item), want = req.headers["if-match"];
       if (want && (!f || f.etag !== want)) return json(res, 412, { error: { code: "resourceModified" } }), true;
-      files.set(item, { bytes: await readBody(req), etag: `"{fake-${++etagN}},1"` });
+      files.set(item, { bytes: await readBody(req), etag: `"{fake-${++etagN}},1"`, ver: ++verN });
       return json(res, f ? 200 : 201, meta(item)), true;
     }
     if (!action && req.method === "GET") return files.has(item) ? json(res, 200, meta(item)) : json(res, 404, { error: { code: "itemNotFound" } }), true;
     if (!action && req.method === "DELETE") {
-      for (const k of [...files.keys()]) if (k === item || k.startsWith(item + "/")) files.delete(k);
+      for (const k of [...files.keys()]) if (k === item || k.startsWith(item + "/")) { files.delete(k); removed.push({ id: k, ver: ++verN }); }
       res.writeHead(204); res.end(); return true;
     }
     return json(res, 405, {}), true;

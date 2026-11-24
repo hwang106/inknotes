@@ -68,19 +68,26 @@ export function createSync({ folder, local, stateKey, images = false }) {
     set("syncing", { detail: "Syncing" });
     try {
       await withLock(async () => {
-        const keyFile = await readKeyFile();
-        let key = await store.getMeta("key");
+        const key = await store.getMeta("key");
         const salt = await store.getMeta("keySalt");
-        if (key && (!keyFile || keyFile.salt !== salt)) {
-          await forgetKey(); key = null;   // the passphrase was reset from another device
-        }
-        if (!key) { set(keyFile ? "needsPassphrase" : "needsNewPassphrase"); return; }
+        if (!key) { set((await readKeyFile()) ? "needsPassphrase" : "needsNewPassphrase"); return; }
+        // key.json changes only when the passphrase is reset on another device. It's checked
+        // alongside the folder listing (so it costs no extra wait), before anything uploads.
+        const check = async () => {
+          const keyFile = await readKeyFile();
+          if (!keyFile || keyFile.salt !== salt) throw Object.assign(new Error("Passphrase changed"), { keyChanged: true, keyFile });
+        };
         let state = await store.getMeta(stateKey);
         if (!state || state.salt !== salt) state = { salt, notes: {}, images: {} };   // new passphrase: start fresh
         try {
-          const res = await syncOnce({ drive, local, key, state, folder, images, onProgress: d => set("syncing", { detail: d }) });
+          const res = await syncOnce({ drive, local, key, state, folder, images, check, onProgress: d => set("syncing", { detail: d }) });
           if (res.pulled.length) hooks.onPulled(res.pulled);
           if (res.conflicts) again = true;
+        } catch (err) {
+          if (!err.keyChanged) throw err;
+          await forgetKey();   // the passphrase was reset from another device
+          set(err.keyFile ? "needsPassphrase" : "needsNewPassphrase");
+          return;
         } finally {
           await store.setMeta(stateKey, state);   // keep progress even if a later step failed
         }
@@ -143,7 +150,7 @@ export function createSync({ folder, local, stateKey, images = false }) {
       return back;
     },
 
-    soon() { if (auth.account()) schedule(4000); },   // after a local save
+    soon() { if (auth.account()) schedule(1000); },   // after a local save
     now() { schedule(0); },
     signIn(opts) { return auth.signIn(opts); },
 
