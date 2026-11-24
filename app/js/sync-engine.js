@@ -31,7 +31,8 @@ async function eachAtOnce(items, fn) {
   await Promise.all(Array.from({ length: Math.min(AT_ONCE, items.length) }, worker));
 }
 
-export async function syncOnce({ drive, local, key, state, folder = "notes", images = true, check = null, onProgress = () => {} }) {
+// imagesOf(record): ids of the images a record shows (InkBoard boards list theirs differently).
+export async function syncOnce({ drive, local, key, state, folder = "notes", images = true, check = null, onProgress = () => {}, imagesOf: imgs = imagesOf }) {
   state.notes = state.notes || {}; state.images = state.images || {};
   const result = { pulled: [], pushed: 0, conflicts: 0 };
 
@@ -60,7 +61,7 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
     await eachAtOnce(toPush, async l => {
       const known = state.notes[l.id];
       onProgress(toPush.length > 1 ? `Uploading ${++pushed} of ${toPush.length}` : "Uploading");
-      if (images) for (const imgId of imagesOf(l)) {
+      if (images) for (const imgId of imgs(l)) {
         if (state.images[imgId]) continue;
         const blob = await local.getImage(imgId);
         if (!blob) continue;
@@ -105,7 +106,7 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
   });
 
   async function pullImages(n) {
-    for (const imgId of imagesOf(n)) {
+    for (const imgId of imgs(n)) {
       if (await local.getImage(imgId)) { state.images[imgId] = true; continue; }
       const name = imgId + ".bin";
       const bytes = await drive.read("images", name);

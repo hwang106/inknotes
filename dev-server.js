@@ -1,6 +1,7 @@
 // Tiny local web server for developing InkNotes and InkTasks, laid out like GitHub Pages:
 //   http://localhost:5173/inknotes/  -> ./app            (also at / for older bookmarks)
 //   http://localhost:5173/inktasks/  -> ../InkTasks/app
+//   http://localhost:5173/inkboard/  -> ../InkBoard/app
 // Run: node dev-server.js
 //
 // FAKE_MS=1 node dev-server.js  adds a pretend Microsoft sign-in and OneDrive app folder (kept in
@@ -13,13 +14,13 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "app");
-const MOUNTS = [["/inknotes/", ROOT], ["/inktasks/", path.join(__dirname, "..", "InkTasks", "app")], ["/", ROOT]];
+const MOUNTS = [["/inknotes/", ROOT], ["/inktasks/", path.join(__dirname, "..", "InkTasks", "app")], ["/inkboard/", path.join(__dirname, "..", "InkBoard", "app")], ["/", ROOT]];
 
 const FAKE = !!process.env.FAKE_MS || process.argv.includes("--fake-ms");
 const PORT_ARG = process.argv.find(a => /^--port=\d+$/.test(a));
 const PORT = Number(PORT_ARG ? PORT_ARG.slice(7) : process.env.PORT) || 5173;
 const TYPES = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".webmanifest": "application/manifest+json", ".json": "application/json", ".svg": "image/svg+xml",
   ".png": "image/png", ".ico": "image/x-icon", ".webp": "image/webp",
 };
@@ -152,7 +153,7 @@ http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (FAKE && await fake(req, res, url)) return;
   const fullPath = decodeURIComponent(url.pathname);
-  if (fullPath === "/inknotes" || fullPath === "/inktasks") { res.writeHead(301, { Location: fullPath + "/" }); res.end(); return; }
+  if (fullPath === "/inknotes" || fullPath === "/inktasks" || fullPath === "/inkboard") { res.writeHead(301, { Location: fullPath + "/" }); res.end(); return; }
   const [mount, base] = MOUNTS.find(([m]) => fullPath.startsWith(m));
   const urlPath = "/" + fullPath.slice(mount.length);
   let file = path.normalize(path.join(base, urlPath));

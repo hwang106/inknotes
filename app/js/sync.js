@@ -22,8 +22,8 @@ async function readKeyFile() {
 async function forgetKey() { await store.deleteMeta("key"); await store.deleteMeta("keySalt"); }
 
 // folder: OneDrive folder; local: { all, get, put, getImage?, putImage? }; stateKey: where this app
-// keeps what it last synced; images: also sync pasted images.
-export function createSync({ folder, local, stateKey, images = false }) {
+// keeps what it last synced; images: also sync pasted images; imagesOf: which images a record uses.
+export function createSync({ folder, local, stateKey, images = false, imagesOf }) {
   // state: unconfigured | signedOut | needsPassphrase | needsNewPassphrase | syncing | ok | offline | reauth | error
   let status = { state: CLIENT_ID ? "signedOut" : "unconfigured" };
   let hooks = { onStatus() {}, onPulled() {}, onRedirect() {} };
@@ -80,7 +80,7 @@ export function createSync({ folder, local, stateKey, images = false }) {
         let state = await store.getMeta(stateKey);
         if (!state || state.salt !== salt) state = { salt, notes: {}, images: {} };   // new passphrase: start fresh
         try {
-          const res = await syncOnce({ drive, local, key, state, folder, images, check, onProgress: d => set("syncing", { detail: d }) });
+          const res = await syncOnce({ drive, local, key, state, folder, images, check, imagesOf, onProgress: d => set("syncing", { detail: d }) });
           if (res.pulled.length) hooks.onPulled(res.pulled);
           if (res.conflicts) again = true;
         } catch (err) {
@@ -181,7 +181,7 @@ export function createSync({ folder, local, stateKey, images = false }) {
     // Forgot the passphrase: removes the encrypted copies in OneDrive (data on devices stays),
     // so a new passphrase can be set. Other devices and the other app will ask for the new one.
     async startOver() {
-      for (const p of ["notes", "images", "todo", KEY_FILE]) await drive.remove(p);
+      for (const p of ["notes", "images", "todo", "boards", KEY_FILE]) await drive.remove(p);
       await forgetKey();
       set("needsNewPassphrase");
     },
