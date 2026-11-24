@@ -151,4 +151,25 @@ await test("tasks sync in their own folder, alongside notes", async () => {
   assert.ok(![...T1.notes.keys()].some(id => id.startsWith("n")), "notes don't leak into tasks");
 });
 
+await test("an edit made here uploads before a big download", async () => {
+  const D = fakeDrive(), P = fakeDevice(), Q = fakeDevice();
+  const runT = dev => syncOnce({ drive: D, local: dev, key, state: dev.state, folder: "todo", images: false });
+  for (let i = 0; i < 20; i++) await P.putNote({ id: "p" + i, kind: "task", title: "P" + i, created: 1, updated: 1 });
+  await runT(P); await runT(Q);
+  for (let i = 0; i < 20; i++) await P.putNote({ ...P.notes.get("p" + i), title: "P" + i + " changed", updated: 2 });
+  await runT(P);   // OneDrive now has 20 changes Q hasn't seen
+  await Q.putNote({ ...Q.notes.get("p0"), title: "edited on Q", updated: 3 });   // clashes: waits for the download
+  await Q.putNote({ id: "q-new", kind: "task", title: "Made on Q", created: 3, updated: 3 });
+  const order = [], read = D.read, write = D.write;
+  D.read = async (...a) => { order.push("read"); return read(...a); };
+  D.write = async (...a) => { order.push("write:" + a[1]); return write(...a); };
+  await runT(Q);
+  D.read = read; D.write = write;
+  assert.equal(order[0], "write:q-new.json", "new task goes up first");
+  assert.equal(order[order.length - 1], "write:p0.json", "the clashing edit waits for the download");
+  assert.equal(Q.notes.get("p5").title, "P5 changed");
+  await runT(P);
+  assert.equal(P.notes.get("p0").title, "edited on Q"); assert.ok(P.notes.has("q-new"));
+});
+
 console.log(`\n${passed} tests passed`);

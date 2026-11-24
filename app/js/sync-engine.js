@@ -41,6 +41,48 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
     if (m) remote.set(m[1], e);
   }
 
+  // Push: records edited here since they were last uploaded or downloaded. Run twice: first for
+  // edits that can't clash with OneDrive (so a big download never holds up what was just changed
+  // here), then, after pulling, for the rest.
+  const clashed = new Set();
+  async function push(safeOnly) {
+    const toPush = (await local.all()).filter(l => {
+      if (localOnly(l) || clashed.has(l.id)) return false;
+      const known = state.notes[l.id], e = remote.get(l.id);
+      if (known && known.updated >= l.updated) return false;
+      if (!safeOnly) return true;
+      return e ? !!known && known.etag === e.etag : !known;   // unchanged in OneDrive, or new
+    });
+    let pushed = 0;
+    await eachAtOnce(toPush, async l => {
+      const known = state.notes[l.id];
+      onProgress(toPush.length > 1 ? `Uploading ${++pushed} of ${toPush.length}` : "Uploading");
+      if (images) for (const imgId of imagesOf(l)) {
+        if (state.images[imgId]) continue;
+        const blob = await local.getImage(imgId);
+        if (!blob) continue;
+        const name = imgId + ".bin";
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        await drive.write("images", name, await seal(key, bytes, "images/" + name, { compress: false }));
+        state.images[imgId] = true;
+      }
+      const name = l.id + ".json";
+      const ifMatch = known && remote.has(l.id) ? known.etag : null;
+      try {
+        const { etag } = await drive.write(folder, name, await sealJSON(key, l, folder + "/" + name), ifMatch);
+        state.notes[l.id] = { etag, updated: l.updated };
+        if (remote.has(l.id)) remote.set(l.id, { ...remote.get(l.id), etag });   // don't download our own upload
+        result.pushed++;
+      } catch (err) {
+        if (err.status !== 412) throw err;
+        clashed.add(l.id);
+        result.conflicts++;   // another device saved it a moment ago; the next pass sorts it out
+      }
+    });
+  }
+
+  await push(true);
+
   // Pull: records that changed in OneDrive since this device last looked.
   const toPull = [...remote].filter(([id, e]) => !(state.notes[id] && state.notes[id].etag === e.etag));
   let pulled = 0;
@@ -70,31 +112,6 @@ export async function syncOnce({ drive, local, key, state, folder = "notes", ima
     }
   }
 
-  // Push: records edited here since they were last uploaded or downloaded.
-  const toPush = (await local.all()).filter(l => !localOnly(l) && !(state.notes[l.id] && state.notes[l.id].updated >= l.updated));
-  let pushed = 0;
-  await eachAtOnce(toPush, async l => {
-    const known = state.notes[l.id];
-    onProgress(toPush.length > 1 ? `Uploading ${++pushed} of ${toPush.length}` : "Uploading");
-    if (images) for (const imgId of imagesOf(l)) {
-      if (state.images[imgId]) continue;
-      const blob = await local.getImage(imgId);
-      if (!blob) continue;
-      const name = imgId + ".bin";
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      await drive.write("images", name, await seal(key, bytes, "images/" + name, { compress: false }));
-      state.images[imgId] = true;
-    }
-    const name = l.id + ".json";
-    const ifMatch = known && remote.has(l.id) ? known.etag : null;
-    try {
-      const { etag } = await drive.write(folder, name, await sealJSON(key, l, folder + "/" + name), ifMatch);
-      state.notes[l.id] = { etag, updated: l.updated };
-      result.pushed++;
-    } catch (err) {
-      if (err.status !== 412) throw err;
-      result.conflicts++;   // another device saved it a moment ago; the next pass sorts it out
-    }
-  });
+  await push(false);
   return result;
 }

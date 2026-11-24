@@ -108,7 +108,7 @@ export function createSync({ folder, local, stateKey, images = false }) {
         addEventListener("online", () => schedule(500));
         addEventListener("offline", () => set("offline"));
         document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") schedule(500); });
-        timer = setInterval(() => { if (document.visibilityState === "visible" && auth.account()) run(); }, 90e3);
+        timer = setInterval(() => { if (document.visibilityState === "visible" && auth.account()) run(); }, 30e3);
       }
       if (!auth.account()) { if (!back || !back.error) set("signedOut"); return back; }
       mayRedirect = allowRedirect && !back;
