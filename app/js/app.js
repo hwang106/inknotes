@@ -43,8 +43,8 @@ const channel = "BroadcastChannel" in window ? new BroadcastChannel("inknotes") 
 
 const surface = new InkSurface({
   page, scroller, canvas: el.ink, settings: () => settings,
-  onCommit: () => { if (current) { changed(current); layoutSoon(); } },
-  onInkStart: () => { if (body.ownerDocument.activeElement === body) body.blur(); },   // hide the keyboard while writing
+  onCommit: () => { if (current) { changed(current); layoutSoon(); } markInk(); },
+  onInkStart: () => { if (body.ownerDocument.activeElement === body) body.blur(); body.classList.add("inked"); },   // hide the keyboard while writing
 });
 
 // ---------- helpers ----------
@@ -114,6 +114,8 @@ function serializeBody() {
   c.querySelectorAll("img").forEach(i => { i.removeAttribute("src"); i.removeAttribute("class"); i.removeAttribute("alt"); });
   return sanitize(c.innerHTML);
 }
+// The "Write with your pen, or type here" hint only shows on a note with no ink.
+function markInk() { body.classList.toggle("inked", !!(surface.strokes && surface.strokes.length)); }
 function renderBody(n) {
   body.innerHTML = sanitize(n.html != null ? n.html : escapeText(n.text || ""));
   hydrateImages();
@@ -356,7 +358,7 @@ function openNote(id, { focus = false } = {}) {
   noteView.hidden = false;
   paintPaper();
   renderBody(n);
-  surface.setStrokes(n.strokes);
+  surface.setStrokes(n.strokes); markInk();
   scroller.scrollTop = 0;
   layout();
   markCards();
@@ -440,7 +442,7 @@ async function applyExternal(id) {
       else { const next = visibleNotes()[0]; if (next && matchMedia("(min-width: 761px)").matches) openNote(next.id); else showEmpty(); }
     } else {
       const top = scroller.scrollTop;
-      current = n; paintPaper(); renderBody(n); surface.setStrokes(n.strokes); layout();
+      current = n; paintPaper(); renderBody(n); surface.setStrokes(n.strokes); markInk(); layout();
       scroller.scrollTop = top;
       if (app.dataset.mode === "note") document.title = titleOf(n) + " – InkNotes";
     }
